@@ -192,6 +192,10 @@ SLIBS+= libasahi \
 	libasahiwinsys
 .endif
 
+.if ${WITH_GALLIUM_KMSRO} == "yes"
+SLIBS+= libkmsrowinsys
+.endif
+
 .if ${WITH_LLVM} == "yes"
 SLIBS+=	libllvmpipe
 .endif

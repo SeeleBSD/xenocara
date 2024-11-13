@@ -100,6 +100,10 @@ SUBDIR+=	libradeonsi
 SUBDIR+=    libasahi_lib libasahi_decode libasahi_layout libasahi_compiler libasahiwinsys libasahi
 .endif
 
+.if ${WITH_GALLIUM_KMSRO} == "yes" || make(obj)
+SUBDIR+=    libkmsrowinsys
+.endif
+
 # installed libs
 SUBDIR+=	libglapi libgbm libEGL libGL libGLESv1_CM libGLESv2 libOSMesa
 
