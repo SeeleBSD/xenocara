@@ -1,0 +1,4 @@
+major=30
+minor=4
+# note: If bumping the major, also bump major for libXft, libXfont2
+#       and libfontconfig 
