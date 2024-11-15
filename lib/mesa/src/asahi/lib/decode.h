@@ -10,6 +10,7 @@
 
 #include <sys/types.h>
 #include "agx_bo.h"
+#include "drm-uapi/asahi_drm.h"
 
 void agxdecode_next_frame(void);
 
@@ -37,5 +38,12 @@ void libagxdecode_vdm(uint64_t addr, const char *label, bool verbose);
 void libagxdecode_cdm(uint64_t addr, const char *label, bool verbose);
 void libagxdecode_usc(uint64_t addr, const char *label, bool verbose);
 void libagxdecode_shutdown(void);
+
+void agxdecode_drm_cmd_render(struct drm_asahi_params_global *params,
+                              struct drm_asahi_cmd_render *cmdbuf,
+                              bool verbose);
+void agxdecode_drm_cmd_compute(struct drm_asahi_params_global *params,
+                               struct drm_asahi_cmd_compute *cmdbuf,
+                               bool verbose);
 
 #endif /* __AGX_DECODE_H__ */

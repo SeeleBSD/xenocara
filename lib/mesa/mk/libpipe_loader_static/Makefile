@@ -8,7 +8,8 @@ NOPROFILE=
 
 SRCS=	pipe_loader.c \
 	pipe_loader_drm.c \
-	pipe_loader_sw.c
+	pipe_loader_sw.c \
+	pipe_kmsro.c
 
 .include "../Makefile.inc"
 
@@ -19,6 +20,7 @@ CPPFLAGS+=	-DDROP_PIPE_LOADER_MISC \
 		-I${MESA_SRC}/src/gallium/auxiliary \
 		-I${MESA_SRC}/src/gallium/auxiliary/pipe-loader \
 		-I${MESA_SRC}/src/gallium/winsys \
+		-I${MESA_SRC}/src/gallium/drivers \
 		-I${MESA_SRC}/src/loader \
 		-I${MESA_SRC}/generated/src/util
 
@@ -30,3 +32,4 @@ obj: _xenocara_obj
 .include <bsd.xorg.mk>
 
 .PATH:	${MESA_SRC}/src/gallium/auxiliary/pipe-loader
+.PATH:  ${MESA_SRC}/src/gallium/targets/pipe-loader

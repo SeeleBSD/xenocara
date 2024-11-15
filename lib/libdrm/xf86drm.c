@@ -121,6 +121,17 @@ struct drm_pciinfo {
 #define DRM_IOCTL_GET_PCIINFO	DRM_IOR(0x15, struct drm_pciinfo)
 #endif
 
+#if defined(__OpenBSD__)
+#define DRM_PLATFORM_DEVICE_LEN 512
+
+struct drm_platforminfo {
+    char fullname[DRM_PLATFORM_DEVICE_LEN];
+    char compatible[DRM_PLATFORM_DEVICE_LEN];
+};
+
+#define DRM_IOCTL_GET_PLATFORMINFO DRM_IOR(0xD0, struct drm_platforminfo)
+#endif
+
 #define DRM_MSG_VERBOSITY 3
 
 #define memclear(s) memset(&s, 0, sizeof(s))
@@ -3673,7 +3684,8 @@ static int drmParseSubsystemType(int maj, int min)
      }
     return subsystem_type;
 #elif defined(__OpenBSD__) || defined(__DragonFly__) || defined(__FreeBSD__)
-    return DRM_BUS_PCI;
+    // FIXME: Handle PCI
+    return DRM_BUS_PLATFORM;
 #else
 #warning "Missing implementation of drmParseSubsystemType"
     return -EINVAL;
@@ -4349,7 +4361,28 @@ static int drmParseOFBusInfo(int maj, int min, char *fullname)
     free(name);
 
     return 0;
-#else
+#elif __OpenBSD__
+    struct drm_platforminfo pinfo;
+    int fd, type;
+
+    type = drmGetMinorType(maj, min);
+    if (type == -1)
+        return -ENODEV;
+
+    fd = drmOpenMinor(min, 0, type);
+    if (fd < 0)
+        return -errno;
+
+    if (drmIoctl(fd, DRM_IOCTL_GET_PLATFORMINFO, &pinfo)) {
+        close(fd);
+        return -errno;
+    }
+    close(fd);
+
+    strcpy(fullname, pinfo.fullname);
+
+    return 0;
+#else 
 #warning "Missing implementation of drmParseOFBusInfo"
     return -EINVAL;
 #endif
@@ -4409,6 +4442,29 @@ free:
 
     free(*compatible);
     return err;
+#elif __OpenBSD__
+    struct drm_platforminfo pinfo;
+    int fd, type;
+
+    type = drmGetMinorType(maj, min);
+    if (type == -1)
+        return -ENODEV;
+
+    fd = drmOpenMinor(min, 0, type);
+    if (fd < 0)
+        return -errno;
+
+    if (drmIoctl(fd, DRM_IOCTL_GET_PLATFORMINFO, &pinfo)) {
+        close(fd);
+        return -errno;
+    }
+    close(fd);
+
+    *compatible = calloc(2, sizeof(char*));
+    (*compatible)[0] = malloc(sizeof(char) * 512);
+    strcpy((*compatible)[0], pinfo.compatible);
+
+    return 0;
 #else
 #warning "Missing implementation of drmParseOFDeviceInfo"
     return -EINVAL;
@@ -4447,6 +4503,7 @@ static int drmProcessPlatformDevice(drmDevicePtr *device,
     }
 
     *device = dev;
+    printf("%s %s\n", dev->businfo.platform->fullname, dev->deviceinfo.platform->compatible[0]);
 
     return 0;
 

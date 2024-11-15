@@ -15,7 +15,8 @@ CPPFLAGS+=	-DGALLIUM_KMSRO \
 		-I${MESA_SRC}/src/gallium/winsys \
 		-I${MESA_SRC}/src/gallium/winsys/kmsro/drm \
 		-I${MESA_SRC}/src/gallium/drivers \
-		-I${MESA_SRC}/src/loader
+		-I${MESA_SRC}/src/loader \
+		-lloader
 
 install:
 

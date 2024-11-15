@@ -26,6 +26,7 @@
 #include "util/hash_table.h"
 #include "util/u_range.h"
 #include "agx_meta.h"
+#include "drm-uapi/asahi_drm.h"
 
 #ifdef __GLIBC__
 #include <errno.h>
@@ -245,6 +246,8 @@ struct agx_stage {
 };
 
 union agx_batch_result {
+   struct drm_asahi_result_render render;
+   struct drm_asahi_result_compute compute;
 };
 
 struct agx_batch {

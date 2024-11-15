@@ -63,6 +63,11 @@ GALLIUM_DRIVERS+=	asahi
 CPPFLAGS+=	-DGALLIUM_ASAHI
 .endif
 
+.if ${WITH_GALLIUM_KMSRO} == "yes"
+GALLIUM_DRIVERS+=   kmsro
+CPPFLAGS+=  -DGALLIUM_KMSRO
+.endif
+
 install:
 	${INSTALL} ${INSTALL_COPY} ${INSTALL_STRIP} \
 	    -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE} \
