@@ -118,7 +118,7 @@ agx_bo_alloc(struct agx_device *dev, size_t size, enum agx_bo_flags flags)
    assert(!memcmp(bo, &((struct agx_bo){}), sizeof(*bo)));
 
    bo->type = AGX_ALLOC_REGULAR;
-   bo->size = size; /* TODO: gem_create.size */
+   bo->size = gem_create.size;
    bo->flags = flags;
    bo->dev = dev;
    bo->handle = handle;
@@ -351,7 +351,7 @@ agx_get_params(struct agx_device *dev, void *buf, size_t size)
 
    int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_GET_PARAMS, &get_param);
    if (ret) {
-      fprintf(stderr, "DRM_IOCTL_ASAHI_GET_PARAMS failed: %m\n");
+      fprintf(stderr, "DRM_IOCTL_ASAHI_GET_PARAMS failed: %d\n", ret);
       return -EINVAL;
    }
 
@@ -453,7 +453,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
       &dev->usc_heap, dev->params.vm_shader_start,
       dev->params.vm_shader_end - dev->params.vm_shader_start + 1);
 
-   dev->queue_id = agx_create_command_queue(dev, 0 /* TODO: CAPS */);
+   dev->queue_id = agx_create_command_queue(dev, DRM_ASAHI_QUEUE_CAP_RENDER | DRM_ASAHI_QUEUE_CAP_BLIT | DRM_ASAHI_QUEUE_CAP_COMPUTE);
    agx_get_global_ids(dev);
 
    return true;

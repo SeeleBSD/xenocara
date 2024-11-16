@@ -1,0 +1,10 @@
+prefix=/usr/X11R6
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: osmesa
+Description: Mesa Off-screen Rendering Library
+Version: 23.3.6
+Libs: -L${libdir} -lOSMesa
+Libs.private: -lpthread -pthread -lm
+Cflags: -I${includedir}

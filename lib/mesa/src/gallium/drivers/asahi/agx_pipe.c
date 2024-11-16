@@ -1234,6 +1234,13 @@ agx_decompress(struct agx_context *ctx, struct agx_resource *rsrc,
    transition_resource(&ctx->base, rsrc, &templ);
 }
 
+static bool
+is_aligned(unsigned x, unsigned pot_alignment)
+{
+   assert(util_is_power_of_two_nonzero(pot_alignment));
+   return (x & (pot_alignment - 1)) == 0;
+}
+
 static void
 agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
            struct attachments *att, struct agx_pool *pool,
@@ -1493,8 +1500,8 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    // TODO: optimize
    c->flags |= ASAHI_RENDER_PROCESS_EMPTY_TILES;
 
-   if (dev->debug & AGX_DBG_SYNCTVB)
-      c->flags |= ASAHI_RENDER_SYNC_TVB_GROWTH;
+   // if (dev->debug & AGX_DBG_SYNCTVB)
+      // c->flags |= ASAHI_RENDER_SYNC_TVB_GROWTH;
 
    for (unsigned i = 0; i < framebuffer->nr_cbufs; ++i) {
       if (!framebuffer->cbufs[i])

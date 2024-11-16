@@ -330,7 +330,7 @@ struct drm_asahi_attachment {
 
 #define ASAHI_RENDER_NO_CLEAR_PIPELINE_TEXTURES (1UL << 0)
 #define ASAHI_RENDER_SET_WHEN_RELOADING_Z_OR_S (1UL << 1)
-#define ASAHI_RENDER_SYNC_TVB_GROWTH (1UL << 2)
+#define ASAHI_RENDER_VERTEX_SPILLS (1UL << 2)
 #define ASAHI_RENDER_PROCESS_EMPTY_TILES (1UL << 3)
 #define ASAHI_RENDER_NO_VERTEX_CLUSTERING (1UL << 4)
 #define ASAHI_RENDER_MSAA_ZS (1UL << 5)
@@ -432,6 +432,7 @@ struct drm_asahi_cmd_render {
 	__u32 depth_dimensions;
 	__u32 isp_bgobjdepth;
 	__u32 isp_bgobjvals;
+
 };
 
 #define ASAHI_RENDER_UNK_UNK1			(1UL << 0)
