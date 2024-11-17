@@ -1066,18 +1066,23 @@ agx_transfer_unmap(struct pipe_context *pctx, struct pipe_transfer *transfer)
    struct pipe_resource *prsrc = transfer->resource;
    struct agx_resource *rsrc = (struct agx_resource *)prsrc;
 
+   printf("agx_transfer_unmap\n");
+
    if (trans->staging.rsrc && (transfer->usage & PIPE_MAP_WRITE)) {
       assert(prsrc->target != PIPE_BUFFER);
       agx_blit_from_staging(pctx, trans);
+      printf("blit\n");
       agx_flush_readers(agx_context(pctx), agx_resource(trans->staging.rsrc),
                         "GPU write staging blit");
    } else if (trans->map && (transfer->usage & PIPE_MAP_WRITE)) {
+      printf("2\n");
       assert(rsrc->modifier == DRM_FORMAT_MOD_APPLE_TWIDDLED);
 
       for (unsigned z = 0; z < transfer->box.depth; ++z) {
          uint8_t *map =
             agx_map_texture_cpu(rsrc, transfer->level, transfer->box.z + z);
          uint8_t *src = (uint8_t *)trans->map + transfer->layer_stride * z;
+         printf("agx_map_texture_cpu\n");
 
          ail_tile(map, src, &rsrc->layout, transfer->level, transfer->stride,
                   transfer->box.x, transfer->box.y, transfer->box.width,

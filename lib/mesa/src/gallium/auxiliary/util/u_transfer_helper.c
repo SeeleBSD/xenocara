@@ -536,9 +536,11 @@ void
 u_transfer_helper_transfer_unmap(struct pipe_context *pctx,
                                  struct pipe_transfer *ptrans)
 {
+   printf("hawawa\n");
    struct u_transfer_helper *helper = pctx->screen->transfer_helper;
 
    if (handle_transfer(ptrans->resource)) {
+      printf("ok handle\n");
       struct u_transfer *trans = u_transfer(ptrans);
 
       if (!(ptrans->usage & PIPE_MAP_FLUSH_EXPLICIT)) {

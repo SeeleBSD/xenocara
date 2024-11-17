@@ -35,8 +35,11 @@ void u_default_buffer_subdata(struct pipe_context *pipe,
    if (!map)
       return;
 
+   printf("buffer_map completed %p\n", (void*)map);
    memcpy(map, data, size);
+   printf("memcpy\n");
    pipe_buffer_unmap(pipe, transfer);
+   printf("buffer_unmap completed\n");
 }
 
 void u_default_clear_buffer(struct pipe_context *pipe,
