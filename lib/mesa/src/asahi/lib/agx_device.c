@@ -12,7 +12,6 @@
 #include <fcntl.h>
 #include <xf86drm.h>
 #include "drm-uapi/dma-buf.h"
-#include "drm-uapi/asahi_drm.h"
 #include "util/log.h"
 #include "util/os_file.h"
 #include "util/os_mman.h"
@@ -72,10 +71,9 @@ agx_bo_bind(struct agx_device *dev, struct agx_bo *bo, uint64_t addr,
    };
 
    int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_GEM_BIND, &gem_bind);
-   if (ret) {
+   if (ret)
       fprintf(stderr, "DRM_IOCTL_ASAHI_GEM_BIND failed: %m (handle=%d)\n",
               bo->handle);
-   }
 
    return ret;
 }
@@ -343,7 +341,7 @@ agx_get_params(struct agx_device *dev, void *buf, size_t size)
 {
    struct drm_asahi_get_params get_param = {
       .param_group = 0,
-      .pointer = (uint64_t)(uintptr_t)buf,
+      .pointer = (uint64_t)buf,
       .size = size,
    };
 
@@ -351,7 +349,7 @@ agx_get_params(struct agx_device *dev, void *buf, size_t size)
 
    int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_GET_PARAMS, &get_param);
    if (ret) {
-      fprintf(stderr, "DRM_IOCTL_ASAHI_GET_PARAMS failed: %d\n", ret);
+      fprintf(stderr, "DRM_IOCTL_ASAHI_GET_PARAMS failed: %m\n");
       return -EINVAL;
    }
 
@@ -370,7 +368,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
    }
    assert(params_size >= sizeof(dev->params));
 
-   if (dev->params.unstable_uabi_version != DRM_ASAHI_UNSTABLE_UABI_VERSION) {
+if (dev->params.unstable_uabi_version != DRM_ASAHI_UNSTABLE_UABI_VERSION) {
       fprintf(stderr, "UABI mismatch: Kernel %d, Mesa %d\n",
               dev->params.unstable_uabi_version,
               DRM_ASAHI_UNSTABLE_UABI_VERSION);
@@ -381,8 +379,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
    uint64_t incompat =
       dev->params.feat_incompat & (~AGX_SUPPORTED_INCOMPAT_FEATURES);
    if (incompat) {
-      fprintf(stderr, "Missing GPU incompat features: 0x%" PRIx64 "\n",
-              incompat);
+      fprintf(stderr, "Missing GPU incompat features: 0x%lx\n", incompat);
       assert(0);
       return false;
    }
@@ -453,7 +450,11 @@ agx_open_device(void *memctx, struct agx_device *dev)
       &dev->usc_heap, dev->params.vm_shader_start,
       dev->params.vm_shader_end - dev->params.vm_shader_start + 1);
 
-   dev->queue_id = agx_create_command_queue(dev, DRM_ASAHI_QUEUE_CAP_RENDER | DRM_ASAHI_QUEUE_CAP_BLIT | DRM_ASAHI_QUEUE_CAP_COMPUTE);
+   dev->vm_id = vm_create.vm_id;
+
+   dev->queue_id = agx_create_command_queue(
+      dev, DRM_ASAHI_QUEUE_CAP_RENDER | DRM_ASAHI_QUEUE_CAP_BLIT |
+              DRM_ASAHI_QUEUE_CAP_COMPUTE);
    agx_get_global_ids(dev);
 
    return true;

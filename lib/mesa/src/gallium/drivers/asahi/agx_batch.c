@@ -130,6 +130,11 @@ agx_batch_init(struct agx_context *ctx,
    }
 
    agx_batch_mark_active(batch);
+
+   batch->result_off = sizeof(union agx_batch_result) * batch_idx;
+   batch->result =
+      (void *)(((uint8_t *)ctx->result_buf->ptr.cpu) + batch->result_off);
+   memset(batch->result, 0, sizeof(union agx_batch_result));
 }
 
 const char *status_str[] = {
@@ -757,12 +762,13 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
       assert(!ret);
 
       if (dev->debug & AGX_DBG_TRACE) {
+         /* agxdecode DRM commands */
          switch (cmd_type) {
          case DRM_ASAHI_CMD_RENDER:
-            agxdecode_drm_cmd_render(&dev->params, cmdbuf, true);
+            agxdecode_drm_cmd_render(cmdbuf, true);
             break;
          case DRM_ASAHI_CMD_COMPUTE:
-            agxdecode_drm_cmd_compute(&dev->params, cmdbuf, true);
+            agxdecode_drm_cmd_compute(cmdbuf, true);
             break;
          default:
             assert(0);
@@ -780,6 +786,9 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
+
+   /* Elide printing stats */
+   batch->result = NULL;
 
    /* Try to clean up up to two batches, to keep memory usage down */
    if (agx_cleanup_batches(ctx) >= 0)

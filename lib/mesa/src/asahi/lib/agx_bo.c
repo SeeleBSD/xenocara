@@ -176,7 +176,7 @@ agx_bo_reference(struct agx_bo *bo)
 {
    if (bo) {
       ASSERTED int count = p_atomic_inc_return(&bo->refcnt);
-      // assert(count != 1);
+      assert(count != 1);
    }
 }
 

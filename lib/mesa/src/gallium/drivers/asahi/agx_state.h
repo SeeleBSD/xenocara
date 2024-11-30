@@ -7,6 +7,7 @@
 #ifndef AGX_STATE_H
 #define AGX_STATE_H
 
+#include <xf86drm.h>
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/layout/layout.h"
 #include "asahi/lib/agx_bo.h"
@@ -16,6 +17,7 @@
 #include "asahi/lib/agx_tilebuffer.h"
 #include "asahi/lib/pool.h"
 #include "compiler/nir/nir_lower_blend.h"
+#include "drm-uapi/asahi_drm.h"
 #include "compiler/shader_enums.h"
 #include "gallium/auxiliary/util/u_blitter.h"
 #include "gallium/include/pipe/p_context.h"
@@ -26,7 +28,6 @@
 #include "util/hash_table.h"
 #include "util/u_range.h"
 #include "agx_meta.h"
-#include "drm-uapi/asahi_drm.h"
 
 #ifdef __GLIBC__
 #include <errno.h>

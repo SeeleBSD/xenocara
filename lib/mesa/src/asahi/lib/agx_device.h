@@ -6,12 +6,12 @@
 #ifndef __AGX_DEVICE_H
 #define __AGX_DEVICE_H
 
+#include "drm-uapi/asahi_drm.h"
 #include "util/simple_mtx.h"
 #include "util/sparse_array.h"
 #include "util/vma.h"
 #include "agx_bo.h"
 #include "agx_formats.h"
-#include "drm-uapi/asahi_drm.h"
 
 // TODO: this is a lie right now
 static const uint64_t AGX_SUPPORTED_INCOMPAT_FEATURES =
