@@ -2,6 +2,7 @@
     "files.associations": {
         "*.embeddedhtml": "html",
         "cstdint": "cpp",
-        "format": "c"
+        "format": "c",
+        "xf86drm.h": "c"
     }
 }

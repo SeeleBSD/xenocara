@@ -801,9 +801,13 @@ agx_batch_num_bo(struct agx_batch *batch)
    BITSET_FOREACH_SET(handle, (batch)->bo_list.set,                            \
                       agx_batch_bo_list_bits(batch))
 
+struct drm_asahi_cmd_compute;
+struct drm_asahi_cmd_render;
+
 void agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
-                      uint32_t barriers, enum drm_asahi_cmd_type cmd_type,
-                      void *cmdbuf);
+                      uint32_t barriers,
+                      struct drm_asahi_cmd_compute *compute,
+                      struct drm_asahi_cmd_render *render);
 
 void agx_flush_batch(struct agx_context *ctx, struct agx_batch *batch);
 void agx_flush_batch_for_reason(struct agx_context *ctx,

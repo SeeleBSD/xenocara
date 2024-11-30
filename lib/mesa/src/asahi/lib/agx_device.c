@@ -14,6 +14,7 @@
 #include "drm-uapi/asahi_drm.h"
 #include "drm-uapi/dma-buf.h"
 #include "util/log.h"
+#include "util/mesa-sha1.h"
 #include "util/os_file.h"
 #include "util/os_mman.h"
 #include "util/simple_mtx.h"
@@ -341,7 +342,7 @@ agx_get_global_id(struct agx_device *dev)
 static ssize_t
 agx_get_params(struct agx_device *dev, void *buf, size_t size)
 {
-   struct drm_asahi_get_params get_param = {
+      struct drm_asahi_get_params get_param = {
       .param_group = 0,
       .pointer = (uint64_t)(uintptr_t)buf,
       .size = size,
@@ -455,9 +456,6 @@ agx_open_device(void *memctx, struct agx_device *dev)
 
    dev->vm_id = vm_create.vm_id;
 
-   dev->queue_id = agx_create_command_queue(
-      dev, DRM_ASAHI_QUEUE_CAP_RENDER | DRM_ASAHI_QUEUE_CAP_BLIT |
-              DRM_ASAHI_QUEUE_CAP_COMPUTE);
    agx_get_global_ids(dev);
 
    return true;
@@ -501,77 +499,7 @@ agx_submit_single(struct agx_device *dev, enum drm_asahi_cmd_type cmd_type,
                   unsigned out_sync_count, void *cmdbuf, uint32_t result_handle,
                   uint32_t result_off, uint32_t result_size)
 {
-   size_t cmdbuf_size;
-
-   switch (cmd_type) {
-   case DRM_ASAHI_CMD_RENDER:
-      cmdbuf_size = sizeof(struct drm_asahi_cmd_render);
-      break;
-   case DRM_ASAHI_CMD_BLIT:
-      assert(0);
-      return -ENOTSUP;
-   case DRM_ASAHI_CMD_COMPUTE:
-      cmdbuf_size = sizeof(struct drm_asahi_cmd_compute);
-      break;
-   default:
-      assert(0);
-      return -ENOTSUP;
-   }
-
-   struct drm_asahi_command cmd = {
-      .cmd_type = cmd_type,
-      .flags = 0,
-      .cmd_buffer = (uint64_t)(uintptr_t)cmdbuf,
-      .cmd_buffer_size = cmdbuf_size,
-      .result_offset = result_off,
-      .result_size = result_size,
-      .barriers = {DRM_ASAHI_BARRIER_NONE, DRM_ASAHI_BARRIER_NONE},
-   };
-
-   for (int i = 0; i < DRM_ASAHI_SUBQUEUE_COUNT; i++) {
-      if (barriers & (1 << i)) {
-         cmd.barriers[i] = 0; // Barrier on previous submission
-      }
-   }
-
-   struct drm_asahi_submit submit = {
-      .flags = 0,
-      .queue_id = dev->queue_id,
-      .result_handle = result_handle,
-      .in_sync_count = in_sync_count,
-      .out_sync_count = out_sync_count,
-      .command_count = 1,
-      .in_syncs = (uint64_t)(uintptr_t)in_syncs,
-      .out_syncs = (uint64_t)(uintptr_t)out_syncs,
-      .commands = (uint64_t)(uintptr_t)&cmd,
-   };
-
-   int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_SUBMIT, &submit);
-   if (ret) {
-      switch (cmd_type) {
-      case DRM_ASAHI_CMD_RENDER: {
-         struct drm_asahi_cmd_render *c = cmdbuf;
-         fprintf(
-            stderr,
-            "DRM_IOCTL_ASAHI_SUBMIT render failed: %m (%dx%d tile %dx%d layers %d samples %d)\n",
-            c->fb_width, c->fb_height, c->utile_width, c->utile_height,
-            c->layers, c->samples);
-         assert(0);
-         break;
-      }
-      case DRM_ASAHI_CMD_COMPUTE:
-         fprintf(stderr, "DRM_IOCTL_ASAHI_SUBMIT compute failed: %m\n");
-         assert(0);
-         break;
-      default:
-         assert(0);
-      }
-   }
-
-   if (ret == ENODEV)
-      abort();
-
-   return ret;
+   unreachable("Linux UAPI not yet upstream");
 }
 
 int
@@ -654,4 +582,57 @@ agx_debug_fault(struct agx_device *dev, uint64_t addr)
    }
 
    pthread_mutex_unlock(&dev->bo_map_lock);
+}
+
+/* (Re)define UUID_SIZE to avoid including vulkan.h (or p_defines.h) here. */
+#define UUID_SIZE 16
+
+void
+agx_get_device_uuid(const struct agx_device *dev, void *uuid)
+{
+   struct mesa_sha1 sha1_ctx;
+   _mesa_sha1_init(&sha1_ctx);
+
+   /* The device UUID uniquely identifies the given device within the machine.
+    * Since we never have more than one device, this doesn't need to be a real
+    * UUID, so we use SHA1("agx" + gpu_generation + gpu_variant + gpu_revision).
+    */
+   static const char *device_name = "agx";
+   _mesa_sha1_update(&sha1_ctx, device_name, strlen(device_name));
+
+   _mesa_sha1_update(&sha1_ctx, &dev->params.gpu_generation,
+                     sizeof(dev->params.gpu_generation));
+   _mesa_sha1_update(&sha1_ctx, &dev->params.gpu_variant,
+                     sizeof(dev->params.gpu_variant));
+   _mesa_sha1_update(&sha1_ctx, &dev->params.gpu_revision,
+                     sizeof(dev->params.gpu_revision));
+
+   uint8_t sha1[SHA1_DIGEST_LENGTH];
+   _mesa_sha1_final(&sha1_ctx, sha1);
+
+   assert(SHA1_DIGEST_LENGTH >= UUID_SIZE);
+   memcpy(uuid, sha1, UUID_SIZE);
+}
+
+void
+agx_get_driver_uuid(void *uuid)
+{
+   const char *driver_id = PACKAGE_VERSION MESA_GIT_SHA1;
+
+   /* The driver UUID is used for determining sharability of images and memory
+    * between two Vulkan instances in separate processes, but also to
+    * determining memory objects and sharability between Vulkan and OpenGL
+    * driver. People who want to share memory need to also check the device
+    * UUID.
+    */
+   struct mesa_sha1 sha1_ctx;
+   _mesa_sha1_init(&sha1_ctx);
+
+   _mesa_sha1_update(&sha1_ctx, driver_id, strlen(driver_id));
+
+   uint8_t sha1[SHA1_DIGEST_LENGTH];
+   _mesa_sha1_final(&sha1_ctx, sha1);
+
+   assert(SHA1_DIGEST_LENGTH >= UUID_SIZE);
+   memcpy(uuid, sha1, UUID_SIZE);
 }

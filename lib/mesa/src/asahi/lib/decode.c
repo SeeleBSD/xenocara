@@ -804,6 +804,24 @@ agxdecode_gfx(uint32_t *cmdbuf, uint64_t encoder, bool verbose,
    }
 }
 
+static void
+agxdecode_sampler_heap(uint64_t heap, unsigned count)
+{
+   if (!heap)
+      return;
+
+   struct agx_sampler_packed samp[1024];
+   agxdecode_fetch_gpu_array(heap, samp);
+
+   for (unsigned i = 0; i < count; ++i) {
+      fprintf(agxdecode_dump_stream, "Heap sampler %u\n", i);
+
+      agx_unpack(agxdecode_dump_stream, samp + i, SAMPLER, temp);
+      agx_print(agxdecode_dump_stream, SAMPLER, temp,
+                (agxdecode_indent + 1) * 2);
+   }
+}
+
 void
 agxdecode_drm_cmd_render(struct drm_asahi_params_global *params,
                          struct drm_asahi_cmd_render *c, bool verbose)
@@ -853,7 +871,28 @@ agxdecode_drm_cmd_render(struct drm_asahi_params_global *params,
    DUMP_FIELD(c, "0x%x", isp_bgobjdepth);
    DUMP_FIELD(c, "0x%x", isp_bgobjvals);
 
-   // TODO: attachments
+   agxdecode_sampler_heap(c->vertex_sampler_array, c->vertex_sampler_count);
+
+   /* Linux driver doesn't use this, at least for now */
+   assert(c->fragment_sampler_array == c->vertex_sampler_array);
+   assert(c->fragment_sampler_count == c->vertex_sampler_count);
+
+   DUMP_FIELD(c, "%d", vertex_attachment_count);
+   struct drm_asahi_attachment *vertex_attachments =
+      (void *)c->vertex_attachments;
+   for (unsigned i = 0; i < c->vertex_attachment_count; i++) {
+      DUMP_FIELD((&vertex_attachments[i]), "0x%x", order);
+      DUMP_FIELD((&vertex_attachments[i]), "0x%llx", size);
+      DUMP_FIELD((&vertex_attachments[i]), "0x%llx", pointer);
+   }
+   DUMP_FIELD(c, "%d", fragment_attachment_count);
+   struct drm_asahi_attachment *fragment_attachments =
+      (void *)c->fragment_attachments;
+   for (unsigned i = 0; i < c->fragment_attachment_count; i++) {
+      DUMP_FIELD((&fragment_attachments[i]), "0x%x", order);
+      DUMP_FIELD((&fragment_attachments[i]), "0x%llx", size);
+      DUMP_FIELD((&fragment_attachments[i]), "0x%llx", pointer);
+   }
 
    agxdecode_map_read_write();
 }
@@ -871,7 +910,17 @@ agxdecode_drm_cmd_compute(struct drm_asahi_params_global *params,
    DUMP_FIELD(c, "0x%x", encoder_id);
    DUMP_FIELD(c, "0x%x", cmd_id);
 
+   agxdecode_sampler_heap(c->sampler_array, c->sampler_count);
+
    agxdecode_map_read_write();
+
+   if (c->helper_program & 1) {
+      fprintf(agxdecode_dump_stream, "Helper program:\n");
+      uint8_t buf[1024];
+      agx_disassemble(buf,
+                      agxdecode_fetch_gpu_array(c->helper_program & ~1, buf),
+                      agxdecode_dump_stream);
+   }
 }
 
 static void
