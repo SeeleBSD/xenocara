@@ -11,6 +11,7 @@
 
 #include <fcntl.h>
 #include <xf86drm.h>
+#include "drm-uapi/asahi_drm.h"
 #include "drm-uapi/dma-buf.h"
 #include "util/log.h"
 #include "util/os_file.h"
@@ -71,9 +72,10 @@ agx_bo_bind(struct agx_device *dev, struct agx_bo *bo, uint64_t addr,
    };
 
    int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_GEM_BIND, &gem_bind);
-   if (ret)
+   if (ret) {
       fprintf(stderr, "DRM_IOCTL_ASAHI_GEM_BIND failed: %m (handle=%d)\n",
               bo->handle);
+   }
 
    return ret;
 }
@@ -341,7 +343,7 @@ agx_get_params(struct agx_device *dev, void *buf, size_t size)
 {
    struct drm_asahi_get_params get_param = {
       .param_group = 0,
-      .pointer = (uint64_t)buf,
+      .pointer = (uint64_t)(uintptr_t)buf,
       .size = size,
    };
 
@@ -368,7 +370,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
    }
    assert(params_size >= sizeof(dev->params));
 
-if (dev->params.unstable_uabi_version != DRM_ASAHI_UNSTABLE_UABI_VERSION) {
+   if (dev->params.unstable_uabi_version != DRM_ASAHI_UNSTABLE_UABI_VERSION) {
       fprintf(stderr, "UABI mismatch: Kernel %d, Mesa %d\n",
               dev->params.unstable_uabi_version,
               DRM_ASAHI_UNSTABLE_UABI_VERSION);
@@ -379,7 +381,8 @@ if (dev->params.unstable_uabi_version != DRM_ASAHI_UNSTABLE_UABI_VERSION) {
    uint64_t incompat =
       dev->params.feat_incompat & (~AGX_SUPPORTED_INCOMPAT_FEATURES);
    if (incompat) {
-      fprintf(stderr, "Missing GPU incompat features: 0x%lx\n", incompat);
+      fprintf(stderr, "Missing GPU incompat features: 0x%" PRIx64 "\n",
+              incompat);
       assert(0);
       return false;
    }
@@ -518,7 +521,7 @@ agx_submit_single(struct agx_device *dev, enum drm_asahi_cmd_type cmd_type,
    struct drm_asahi_command cmd = {
       .cmd_type = cmd_type,
       .flags = 0,
-      .cmd_buffer = (uint64_t)cmdbuf,
+      .cmd_buffer = (uint64_t)(uintptr_t)cmdbuf,
       .cmd_buffer_size = cmdbuf_size,
       .result_offset = result_off,
       .result_size = result_size,
@@ -538,9 +541,9 @@ agx_submit_single(struct agx_device *dev, enum drm_asahi_cmd_type cmd_type,
       .in_sync_count = in_sync_count,
       .out_sync_count = out_sync_count,
       .command_count = 1,
-      .in_syncs = (uint64_t)in_syncs,
-      .out_syncs = (uint64_t)out_syncs,
-      .commands = (uint64_t)&cmd,
+      .in_syncs = (uint64_t)(uintptr_t)in_syncs,
+      .out_syncs = (uint64_t)(uintptr_t)out_syncs,
+      .commands = (uint64_t)(uintptr_t)&cmd,
    };
 
    int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_SUBMIT, &submit);

@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "*.embeddedhtml": "html",
-        "cstdint": "cpp"
+        "cstdint": "cpp",
+        "format": "c"
     }
 }

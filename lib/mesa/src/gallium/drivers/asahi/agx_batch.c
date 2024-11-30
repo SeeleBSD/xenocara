@@ -129,12 +129,12 @@ agx_batch_init(struct agx_context *ctx,
       assert(!ret && batch->syncobj);
    }
 
-   agx_batch_mark_active(batch);
-
-   batch->result_off = sizeof(union agx_batch_result) * batch_idx;
+   batch->result_off = sizeof(union agx_batch_result) * agx_batch_idx(batch);
    batch->result =
       (void *)(((uint8_t *)ctx->result_buf->ptr.cpu) + batch->result_off);
    memset(batch->result, 0, sizeof(union agx_batch_result));
+
+   agx_batch_mark_active(batch);
 }
 
 const char *status_str[] = {
@@ -263,7 +263,8 @@ agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
       agx_debug_fault(dev, info->address);
    }
 
-   assert(info->status == DRM_ASAHI_STATUS_COMPLETE);
+   assert(info->status == DRM_ASAHI_STATUS_COMPLETE ||
+          info->status == DRM_ASAHI_STATUS_KILLED);
 }
 
 static void
@@ -316,6 +317,9 @@ agx_batch_cleanup(struct agx_context *ctx, struct agx_batch *batch, bool reset)
    if (!(dev->debug & (AGX_DBG_TRACE | AGX_DBG_SYNC))) {
       agx_batch_print_stats(dev, batch);
    }
+
+   util_unreference_framebuffer_state(&batch->key);
+   agx_batch_mark_complete(batch);
 }
 
 int
@@ -765,10 +769,10 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
          /* agxdecode DRM commands */
          switch (cmd_type) {
          case DRM_ASAHI_CMD_RENDER:
-            agxdecode_drm_cmd_render(cmdbuf, true);
+            agxdecode_drm_cmd_render(&dev->params, cmdbuf, true);
             break;
          case DRM_ASAHI_CMD_COMPUTE:
-            agxdecode_drm_cmd_compute(cmdbuf, true);
+            agxdecode_drm_cmd_compute(&dev->params, cmdbuf, true);
             break;
          default:
             assert(0);
@@ -786,9 +790,6 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
-
-   /* Elide printing stats */
-   batch->result = NULL;
 
    /* Try to clean up up to two batches, to keep memory usage down */
    if (agx_cleanup_batches(ctx) >= 0)
@@ -851,6 +852,9 @@ agx_batch_reset(struct agx_context *ctx, struct agx_batch *batch)
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
+
+   /* Elide printing stats */
+   batch->result = NULL;
 
    agx_batch_cleanup(ctx, batch, true);
 }
