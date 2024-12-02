@@ -44,14 +44,6 @@
 #include "agx_state.h"
 #include "agx_tilebuffer.h"
 
-/* Fake values, pending UAPI upstreaming */
-#ifndef DRM_FORMAT_MOD_APPLE_TWIDDLED
-#define DRM_FORMAT_MOD_APPLE_TWIDDLED (2)
-#endif
-#ifndef DRM_FORMAT_MOD_APPLE_TWIDDLED_COMPRESSED
-#define DRM_FORMAT_MOD_APPLE_TWIDDLED_COMPRESSED (3)
-#endif
-
 /* clang-format off */
 static const struct debug_named_value agx_debug_options[] = {
    {"trace",     AGX_DBG_TRACE,    "Trace the command stream"},
@@ -1263,9 +1255,6 @@ asahi_add_attachment(struct attachments *att, struct agx_resource *rsrc,
    assert(att->count < MAX_ATTACHMENTS);
    int idx = att->count++;
 
-   /* We don't support layered rendering yet */
-   assert(surf->u.tex.first_layer == surf->u.tex.last_layer);
-
    att->list[idx].size = rsrc->layout.size_B;
    att->list[idx].pointer = rsrc->bo->ptr.gpu;
    att->list[idx].order = 1; // TODO: What does this do?
@@ -1297,7 +1286,10 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->cmd_3d_id = cmd_3d_id;
    c->cmd_ta_id = cmd_ta_id;
 
-   c->ppp_ctrl = 0x203; // bit 0: OpenGL depth clipping
+   /* bit 0 specifies OpenGL clip behaviour, but we use Vulkan behaviour so we
+    * can support ARB_clip_control efficiently.
+    */
+   c->ppp_ctrl = 0x202;
 
    c->fb_width = framebuffer->width;
    c->fb_height = framebuffer->height;
@@ -1337,12 +1329,11 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             sres = zsres->separate_stencil;
 
          if (zres) {
-            bool valid = agx_resource_valid(zres, level);
             bool clear = (batch->clear & PIPE_CLEAR_DEPTH);
             bool load = (batch->load & PIPE_CLEAR_DEPTH);
 
             zls_control.z_store_enable = (batch->resolve & PIPE_CLEAR_DEPTH);
-            zls_control.z_load_enable = valid && !clear && load;
+            zls_control.z_load_enable = !clear && load;
 
             c->depth_buffer_load = agx_map_texture_gpu(zres, first_layer) +
                                    ail_get_level_offset_B(&zres->layout, level);
@@ -1401,12 +1392,11 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
          }
 
          if (sres) {
-            bool valid = agx_resource_valid(sres, zsbuf->u.tex.level);
             bool clear = (batch->clear & PIPE_CLEAR_STENCIL);
             bool load = (batch->load & PIPE_CLEAR_STENCIL);
 
             zls_control.s_store_enable = (batch->resolve & PIPE_CLEAR_STENCIL);
-            zls_control.s_load_enable = valid && !clear && load;
+            zls_control.s_load_enable = !clear && load;
 
             c->stencil_buffer_load =
                agx_map_texture_gpu(sres, first_layer) +
@@ -1477,7 +1467,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
       cfg.uniforms = 4 + (framebuffer->nr_cbufs * 8);
 
       bool spills = agx_tilebuffer_spills(&batch->tilebuffer_layout);
-      unsigned nr_tex_per_rt = spills ? 2 : clear_pipeline_textures ? 1 : 0;
+      unsigned nr_tex_per_rt = (spills || clear_pipeline_textures) ? 2 : 0;
       cfg.texture_states = framebuffer->nr_cbufs * nr_tex_per_rt;
 
       cfg.sampler_states = clear_pipeline_textures
@@ -1505,7 +1495,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->utile_height = tib->tile_size.height;
 
    c->samples = tib->nr_samples;
-   c->layers = 1;
+   c->layers = MAX2(util_framebuffer_get_num_layers(framebuffer), 1);
 
    c->ppp_multisamplectl = batch->uniforms.ppp_multisamplectl;
    c->sample_size = tib->sample_size_B;
@@ -1518,7 +1508,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->merge_upper_y = fui(tan_60 / framebuffer->height);
 
    agx_pack(&c->partial_reload_pipeline_bind, COUNTS, cfg) {
-      cfg.texture_states = framebuffer->nr_cbufs;
+      cfg.texture_states = framebuffer->nr_cbufs * 2;
       cfg.sampler_states = AGX_SAMPLER_STATES_4_COMPACT;
       cfg.unknown = 0xFFFF;
    }
@@ -1535,11 +1525,26 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->depth_bias_array = depth_bias_ptr;
    c->visibility_result_buffer = visibility_result_ptr;
 
-   // TODO: optimize
-   c->flags |= ASAHI_RENDER_PROCESS_EMPTY_TILES;
+   c->vertex_sampler_array = 0;
+   c->vertex_sampler_count = 0;
+   c->vertex_sampler_max = 0;
 
-   if (dev->debug & AGX_DBG_SYNCTVB)
-      c->flags |= ASAHI_RENDER_SYNC_TVB_GROWTH;
+   /* In the future we could split the heaps if useful */
+   c->fragment_sampler_array = c->vertex_sampler_array;
+   c->fragment_sampler_count = c->vertex_sampler_count;
+   c->fragment_sampler_max = c->vertex_sampler_max;
+
+   /* If a tile is empty, we do not want to process it, as the redundant
+    * roundtrip of memory-->tilebuffer-->memory wastes a tremendous amount of
+    * memory bandwidth. Any draw marks a tile as non-empty, so we only need to
+    * process empty tiles if the background+EOT programs have a side effect.
+    * This is the case exactly when there is an attachment we are clearing (some
+    * attachment A in clear and in resolve <==> non-empty intersection).
+    *
+    * This case matters a LOT for performance in workloads that split batches.
+    */
+   if (batch->clear & batch->resolve)
+      c->flags |= ASAHI_RENDER_PROCESS_EMPTY_TILES;
 
    for (unsigned i = 0; i < framebuffer->nr_cbufs; ++i) {
       if (!framebuffer->cbufs[i])
@@ -1561,6 +1566,12 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
 
    c->fragment_attachments = (uint64_t)(uintptr_t)&att->list[0];
    c->fragment_attachment_count = att->count;
+
+   c->vertex_helper_arg = 0;
+   c->vertex_helper_program = 0;
+
+   c->fragment_helper_arg = 0;
+   c->fragment_helper_program = 0;
 }
 
 /*

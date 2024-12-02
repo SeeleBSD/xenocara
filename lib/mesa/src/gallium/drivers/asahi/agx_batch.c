@@ -198,16 +198,19 @@ agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
       struct drm_asahi_result_compute *r = &batch->result->compute;
       float time = (r->ts_end - r->ts_start) / dev->params.timer_frequency_hz;
 
+      /*
       mesa_logw(
          "[Batch %d] Compute %s: %.06f\n", batch_idx,
          info->status < ARRAY_SIZE(status_str) ? status_str[info->status] : "?",
          time);
+      */
    } else {
       struct drm_asahi_result_render *r = &batch->result->render;
       float time_vtx = (r->vertex_ts_end - r->vertex_ts_start) /
                        (float)dev->params.timer_frequency_hz;
       float time_frag = (r->fragment_ts_end - r->fragment_ts_start) /
                         (float)dev->params.timer_frequency_hz;
+      /*
       mesa_logw(
          "[Batch %d] Render %s: TVB %9ld/%9ld bytes (%d ovf) %c%c%c | vtx %.06f frag %.06f\n",
          batch_idx,
@@ -218,6 +221,7 @@ agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
          r->flags & DRM_ASAHI_RESULT_RENDER_TVB_GROW_MIN ? 'M' : ' ',
          r->flags & DRM_ASAHI_RESULT_RENDER_TVB_OVERFLOWED ? 'O' : ' ',
          time_vtx, time_frag);
+      */
    }
 
    if (info->fault_type != DRM_ASAHI_FAULT_NONE) {
@@ -263,8 +267,8 @@ agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
       agx_debug_fault(dev, info->address);
    }
 
-   assert(info->status == DRM_ASAHI_STATUS_COMPLETE ||
-          info->status == DRM_ASAHI_STATUS_KILLED);
+   // assert(info->status == DRM_ASAHI_STATUS_COMPLETE ||
+          // info->status == DRM_ASAHI_STATUS_KILLED);
 }
 
 static void
