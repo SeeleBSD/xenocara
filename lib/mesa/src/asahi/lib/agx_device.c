@@ -617,7 +617,7 @@ agx_get_device_uuid(const struct agx_device *dev, void *uuid)
 void
 agx_get_driver_uuid(void *uuid)
 {
-   const char *driver_id = PACKAGE_VERSION MESA_GIT_SHA1;
+   const char *driver_id = PACKAGE_VERSION;
 
    /* The driver UUID is used for determining sharability of images and memory
     * between two Vulkan instances in separate processes, but also to
