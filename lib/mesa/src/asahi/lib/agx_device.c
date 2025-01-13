@@ -499,7 +499,77 @@ agx_submit_single(struct agx_device *dev, enum drm_asahi_cmd_type cmd_type,
                   unsigned out_sync_count, void *cmdbuf, uint32_t result_handle,
                   uint32_t result_off, uint32_t result_size)
 {
-   unreachable("Linux UAPI not yet upstream");
+   size_t cmdbuf_size;
+
+   switch (cmd_type) {
+   case DRM_ASAHI_CMD_RENDER:
+      cmdbuf_size = sizeof(struct drm_asahi_cmd_render);
+      break;
+   case DRM_ASAHI_CMD_BLIT:
+      assert(0);
+      return -ENOTSUP;
+   case DRM_ASAHI_CMD_COMPUTE:
+      cmdbuf_size = sizeof(struct drm_asahi_cmd_compute);
+      break;
+   default:
+      assert(0);
+      return -ENOTSUP;
+   }
+
+   struct drm_asahi_command cmd = {
+      .cmd_type = cmd_type,
+      .flags = 0,
+      .cmd_buffer = (uint64_t)(uintptr_t)cmdbuf,
+      .cmd_buffer_size = cmdbuf_size,
+      .result_offset = result_off,
+      .result_size = result_size,
+      .barriers = {DRM_ASAHI_BARRIER_NONE, DRM_ASAHI_BARRIER_NONE},
+   };
+
+   for (int i = 0; i < DRM_ASAHI_SUBQUEUE_COUNT; i++) {
+      if (barriers & (1 << i)) {
+         cmd.barriers[i] = 0; // Barrier on previous submission
+      }
+   }
+
+   struct drm_asahi_submit submit = {
+      .flags = 0,
+      .queue_id = dev->queue_id,
+      .result_handle = result_handle,
+      .in_sync_count = in_sync_count,
+      .out_sync_count = out_sync_count,
+      .command_count = 1,
+      .in_syncs = (uint64_t)(uintptr_t)in_syncs,
+      .out_syncs = (uint64_t)(uintptr_t)out_syncs,
+      .commands = (uint64_t)(uintptr_t)&cmd,
+   };
+
+   int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_SUBMIT, &submit);
+   if (ret) {
+      switch (cmd_type) {
+      case DRM_ASAHI_CMD_RENDER: {
+         struct drm_asahi_cmd_render *c = cmdbuf;
+         fprintf(
+            stderr,
+            "DRM_IOCTL_ASAHI_SUBMIT render failed: %m (%dx%d tile %dx%d layers %d samples %d)\n",
+            c->fb_width, c->fb_height, c->utile_width, c->utile_height,
+            c->layers, c->samples);
+         assert(0);
+         break;
+      }
+      case DRM_ASAHI_CMD_COMPUTE:
+         fprintf(stderr, "DRM_IOCTL_ASAHI_SUBMIT compute failed: %m\n");
+         assert(0);
+         break;
+      default:
+         assert(0);
+      }
+   }
+
+   if (ret == ENODEV)
+      abort();
+
+   return ret;
 }
 
 int

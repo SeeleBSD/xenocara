@@ -4,6 +4,7 @@
         "cstdint": "cpp",
         "format": "c",
         "xf86drm.h": "c",
-        "bitset": "c"
+        "bitset": "c",
+        "asahi_drm.h": "c"
     }
 }
