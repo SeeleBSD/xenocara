@@ -1299,8 +1299,10 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    /* bit 0 specifies OpenGL clip behaviour. If ARB_clip_control is advertised,
     * we don't set it and lower in the vertex shader.
     */
+#ifdef notyet
    if (dev->debug & AGX_DBG_NOCLIPCTRL)
       c->ppp_ctrl |= 0x1;
+#endif
 
    c->fb_width = framebuffer->width;
    c->fb_height = framebuffer->height;
@@ -1537,8 +1539,8 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->visibility_result_buffer = visibility_result_ptr;
 
    c->vertex_sampler_array = 0;
-   c->vertex_sampler_count = batch->sampler_heap.count;
-   c->vertex_sampler_max = batch->sampler_heap.count + 1;
+   c->vertex_sampler_count = 0;
+   c->vertex_sampler_max = 1;
 
    /* In the future we could split the heaps if useful */
    c->fragment_sampler_array = c->vertex_sampler_array;
