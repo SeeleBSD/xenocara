@@ -3,6 +3,7 @@
         "*.embeddedhtml": "html",
         "cstdint": "cpp",
         "format": "c",
-        "xf86drm.h": "c"
+        "xf86drm.h": "c",
+        "bitset": "c"
     }
 }

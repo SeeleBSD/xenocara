@@ -129,11 +129,10 @@ agx_batch_init(struct agx_context *ctx,
       assert(!ret && batch->syncobj);
    }
 
-   batch->result_off =
-      (2 * sizeof(union agx_batch_result)) * agx_batch_idx(batch);
+   batch->result_off = sizeof(union agx_batch_result) * agx_batch_idx(batch);
    batch->result =
       (void *)(((uint8_t *)ctx->result_buf->ptr.cpu) + batch->result_off);
-   memset(batch->result, 0, sizeof(union agx_batch_result) * 2);
+   memset(batch->result, 0, sizeof(union agx_batch_result));
 
    agx_batch_mark_active(batch);
 }
@@ -177,15 +176,26 @@ const char *high_unit_str[16] = {
 };
 
 static void
-agx_print_result(struct agx_device *dev, struct drm_asahi_result_info *info,
-                 unsigned batch_idx, bool is_compute)
+agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
 {
+   struct drm_asahi_result_info *info;
+
+   if (!batch->result)
+      return;
+
+   if (batch->key.width == AGX_COMPUTE_BATCH_WIDTH)
+      info = &batch->result->compute.info;
+   else
+      info = &batch->result->render.info;
+
    if (likely(info->status == DRM_ASAHI_STATUS_COMPLETE &&
               !((dev)->debug & AGX_DBG_STATS)))
       return;
 
-   if (is_compute) {
-      struct drm_asahi_result_compute *r = (void *)info;
+   unsigned batch_idx = agx_batch_idx(batch);
+
+   if (batch->key.width == AGX_COMPUTE_BATCH_WIDTH) {
+      struct drm_asahi_result_compute *r = &batch->result->compute;
       float time = (r->ts_end - r->ts_start) / dev->params.timer_frequency_hz;
 
       mesa_logw(
@@ -193,7 +203,7 @@ agx_print_result(struct agx_device *dev, struct drm_asahi_result_info *info,
          info->status < ARRAY_SIZE(status_str) ? status_str[info->status] : "?",
          time);
    } else {
-      struct drm_asahi_result_render *r = (void *)info;
+      struct drm_asahi_result_render *r = &batch->result->render;
       float time_vtx = (r->vertex_ts_end - r->vertex_ts_start) /
                        (float)dev->params.timer_frequency_hz;
       float time_frag = (r->fragment_ts_end - r->fragment_ts_start) /
@@ -255,23 +265,6 @@ agx_print_result(struct agx_device *dev, struct drm_asahi_result_info *info,
 
    assert(info->status == DRM_ASAHI_STATUS_COMPLETE ||
           info->status == DRM_ASAHI_STATUS_KILLED);
-}
-
-static void
-agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
-{
-   unsigned batch_idx = agx_batch_idx(batch);
-
-   if (!batch->result)
-      return;
-
-   if (batch->cdm.bo) {
-      agx_print_result(dev, &batch->result[0].compute.info, batch_idx, true);
-   }
-
-   if (batch->vdm.bo) {
-      agx_print_result(dev, &batch->result[1].render.info, batch_idx, false);
-   }
 }
 
 static void
@@ -653,9 +646,8 @@ agx_add_sync(struct drm_asahi_sync *syncs, unsigned *count, uint32_t handle)
 
 void
 agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
-                 uint32_t barriers,
-                 struct drm_asahi_cmd_compute *compute,
-                 struct drm_asahi_cmd_render *render)
+                 uint32_t barriers, enum drm_asahi_cmd_type cmd_type,
+                 void *cmdbuf)
 {
    struct agx_device *dev = agx_device(ctx->base.screen);
 
@@ -665,9 +657,6 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
    /* Debug builds always get feedback (for fault checks) */
    feedback = true;
 #endif
-
-   /* Timer queries use the feedback timestamping */
-   feedback |= (batch->timestamp_queries.size > 0);
 
    if (!feedback)
       batch->result = NULL;
@@ -720,68 +709,11 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
    /* Add an explicit fence from gallium, if any */
    agx_add_sync(in_syncs, &in_sync_count, agx_get_in_sync(ctx));
 
-   struct drm_asahi_command commands[2];
-   unsigned command_count = 0;
-
-   if (compute) {
-      commands[command_count++] = (struct drm_asahi_command){
-         .cmd_type = DRM_ASAHI_CMD_COMPUTE,
-         .flags = 0,
-         .cmd_buffer = (uint64_t)(uintptr_t)compute,
-         .cmd_buffer_size = sizeof(struct drm_asahi_cmd_compute),
-         .result_offset = feedback ? batch->result_off : 0,
-         .result_size = feedback ? sizeof(union agx_batch_result) : 0,
-         /* Barrier on previous submission */
-         .barriers = {0, 0},
-      };
-   }
-
-   if (render) {
-      commands[command_count++] = (struct drm_asahi_command){
-         .cmd_type = DRM_ASAHI_CMD_RENDER,
-         .flags = 0,
-         .cmd_buffer = (uint64_t)(uintptr_t)render,
-         .cmd_buffer_size = sizeof(struct drm_asahi_cmd_render),
-         .result_offset =
-            feedback ? (batch->result_off + sizeof(union agx_batch_result)) : 0,
-         .result_size = feedback ? sizeof(union agx_batch_result) : 0,
-         /* Barrier on previous submission */
-         .barriers = {compute ? DRM_ASAHI_BARRIER_NONE : 0, compute ? 1 : 0},
-      };
-   }
-
-   struct drm_asahi_submit submit = {
-      .flags = 0,
-      .queue_id = screen->queue_id,
-      .result_handle = feedback ? ctx->result_buf->handle : 0,
-      .in_sync_count = in_sync_count,
-      .out_sync_count = 1,
-      .command_count = command_count,
-      .in_syncs = (uint64_t)(uintptr_t)(in_syncs),
-      .out_syncs = (uint64_t)(uintptr_t)(&out_sync),
-      .commands = (uint64_t)(uintptr_t)(&commands[0]),
-   };
-
-   int ret = drmIoctl(dev->fd, DRM_IOCTL_ASAHI_SUBMIT, &submit);
-   if (ret) {
-      if (compute) {
-         fprintf(stderr, "DRM_IOCTL_ASAHI_SUBMIT compute failed: %m\n");
-      }
-
-      if (render) {
-         struct drm_asahi_cmd_render *c = render;
-         fprintf(
-            stderr,
-            "DRM_IOCTL_ASAHI_SUBMIT render failed: %m (%dx%d tile %dx%d layers %d samples %d)\n",
-            c->fb_width, c->fb_height, c->utile_width, c->utile_height,
-            c->layers, c->samples);
-      }
-
-      assert(0);
-   }
-
-   if (ret == ENODEV)
-      abort();
+   /* Submit! */
+   agx_submit_single(
+      dev, cmd_type, barriers, in_syncs, in_sync_count, &out_sync, 1, cmdbuf,
+      feedback ? ctx->result_buf->handle : 0, feedback ? batch->result_off : 0,
+      feedback ? sizeof(union agx_batch_result) : 0);
 
    /* Now stash our batch fence into any shared BOs. */
    if (shared_bo_count) {
@@ -835,12 +767,16 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
 
       if (dev->debug & AGX_DBG_TRACE) {
          /* agxdecode DRM commands */
-         if (compute)
-            agxdecode_drm_cmd_compute(&dev->params, compute, true);
-
-         if (render)
-            agxdecode_drm_cmd_render(&dev->params, render, true);
-
+         switch (cmd_type) {
+            case DRM_ASAHI_CMD_RENDER:
+            agxdecode_drm_cmd_render(&dev->params, cmdbuf, true);
+            break;
+         case DRM_ASAHI_CMD_COMPUTE:
+            agxdecode_drm_cmd_compute(&dev->params, cmdbuf, true);
+            break;
+         default:
+            assert(0);
+         }
          agxdecode_next_frame();
       }
 
@@ -854,9 +790,6 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
-   
-   /* Elide printing stats */
-   batch->result = NULL;
 
    /* Try to clean up up to two batches, to keep memory usage down */
    if (agx_cleanup_batches(ctx) >= 0)
@@ -919,6 +852,9 @@ agx_batch_reset(struct agx_context *ctx, struct agx_batch *batch)
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
+
+   /* Elide printing stats */
+   batch->result = NULL;
 
    agx_batch_cleanup(ctx, batch, true);
 }

@@ -39,6 +39,7 @@
 #include "agx_device.h"
 #include "agx_disk_cache.h"
 #include "agx_fence.h"
+#include "agx_pack.h"
 #include "agx_public.h"
 #include "agx_state.h"
 #include "agx_tilebuffer.h"
@@ -1535,8 +1536,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->depth_bias_array = depth_bias_ptr;
    c->visibility_result_buffer = visibility_result_ptr;
 
-   c->vertex_sampler_array =
-      batch->sampler_heap.bo ? batch->sampler_heap.bo->ptr.gpu : 0;
+   c->vertex_sampler_array = 0;
    c->vertex_sampler_count = batch->sampler_heap.count;
    c->vertex_sampler_max = batch->sampler_heap.count + 1;
 
@@ -1568,18 +1568,6 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
 
    c->fragment_attachments = (uint64_t)(uintptr_t)&att->list[0];
    c->fragment_attachment_count = att->count;
-
-   if (batch->vs_scratch) {
-      c->flags |= ASAHI_RENDER_VERTEX_SPILLS;
-      c->vertex_helper_arg = batch->ctx->scratch_vs.buf->ptr.gpu;
-      c->vertex_helper_cfg = 0; // max_bucket << 16 for preshader scratch
-      c->vertex_helper_program = dev->helper->ptr.gpu | 1;
-   }
-   if (batch->fs_scratch) {
-      c->fragment_helper_arg = batch->ctx->scratch_fs.buf->ptr.gpu;
-      c->fragment_helper_cfg = 0; // max_bucket << 16 for preshader scratch
-      c->fragment_helper_program = dev->helper->ptr.gpu | 1;
-   }
 }
 
 /*
@@ -1612,61 +1600,64 @@ agx_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
 }
 
 static void
-agx_flush_compute(struct agx_context *ctx, struct agx_batch *batch,
-                  struct drm_asahi_cmd_compute *cmdbuf)
+agx_flush_compute(struct agx_context *ctx, struct agx_batch *batch)
 {
    struct agx_device *dev = agx_device(ctx->base.screen);
 
    /* Finalize the encoder */
-   agx_pack(batch->cdm.current, CDM_STREAM_TERMINATE, _)
+   agx_pack(batch->encoder_current, CDM_STREAM_TERMINATE, _)
       ;
 
-   agx_batch_add_bo(batch, batch->cdm.bo);
+   agx_batch_add_bo(batch, batch->encoder);
 
    unsigned cmdbuf_id = agx_get_global_id(dev);
    unsigned encoder_id = agx_get_global_id(dev);
 
-   *cmdbuf = (struct drm_asahi_cmd_compute){
+   struct drm_asahi_cmd_compute cmdbuf = {
       .flags = 0,
-      .encoder_ptr = batch->cdm.bo->ptr.gpu,
-      .encoder_end = batch->cdm.bo->ptr.gpu +
-                     (batch->cdm.current - (uint8_t *)batch->cdm.bo->ptr.cpu),
+      .encoder_ptr = batch->encoder->ptr.gpu,
+      .encoder_end =
+         batch->encoder->ptr.gpu +
+         (batch->encoder_current - (uint8_t *)batch->encoder->ptr.cpu),
       .helper_arg = 0,
-      .helper_cfg = 0,
+      .helper_unk = 0,
       .helper_program = 0,
-      .iogpu_unk_40 = 0,
-      .sampler_array =
-         batch->sampler_heap.bo ? batch->sampler_heap.bo->ptr.gpu : 0,
-      .sampler_count = batch->sampler_heap.count,
-      .sampler_max = batch->sampler_heap.count + 1,
       .encoder_id = encoder_id,
       .cmd_id = cmdbuf_id,
+      .iogpu_unk_40 = 0x1c,
       .unk_mask = 0xffffffff,
    };
 
-   if (batch->cs_scratch) {
-      // The commented out lines *may* be related to subgroup-level preemption,
-      // which we can't support without implementing threadgroup memory in the
-      // helper. Disable them for now.
-
-      // cmdbuf->iogpu_unk_40 = 0x1c;
-      cmdbuf->helper_arg = ctx->scratch_cs.buf->ptr.gpu;
-      // cmdbuf->helper_cfg = 0x40; // |= max_bucket << 16 for preshader scratch
-      cmdbuf->helper_program = dev->helper->ptr.gpu | 1;
-   }
+   agx_batch_submit(ctx, batch, BARRIER_RENDER | BARRIER_COMPUTE,
+                    DRM_ASAHI_CMD_COMPUTE, &cmdbuf);
 }
 
-static void
-agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
-                 struct drm_asahi_cmd_render *cmdbuf, struct attachments *att)
+void
+agx_flush_batch(struct agx_context *ctx, struct agx_batch *batch)
 {
    struct agx_device *dev = agx_device(ctx->base.screen);
+
+   assert(agx_batch_is_active(batch));
+   assert(!agx_batch_is_submitted(batch));
+
+   /* Compute batches use a different path */
+   if (batch->key.width == AGX_COMPUTE_BATCH_WIDTH) {
+      assert(batch->any_draws && "Compute batches must be nonempty");
+      agx_flush_compute(ctx, batch);
+      return;
+   }
+
+   /* Make sure there's something to submit. */
+   if (!batch->clear && !batch->any_draws) {
+      agx_batch_reset(ctx, batch);
+      return;
+   }
 
    assert(batch->initialized);
 
    /* Finalize the encoder */
    uint8_t stop[5 + 64] = {0x00, 0x00, 0x00, 0xc0, 0x00};
-   memcpy(batch->vdm.current, stop, sizeof(stop));
+   memcpy(batch->encoder_current, stop, sizeof(stop));
 
    uint64_t pipeline_background = agx_build_meta(batch, false, false);
    uint64_t pipeline_background_partial = agx_build_meta(batch, false, true);
@@ -1678,8 +1669,24 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
    for (unsigned i = 0; i < batch->key.nr_cbufs; ++i) {
       struct pipe_surface *surf = batch->key.cbufs[i];
 
-      clear_pipeline_textures |=
-         surf && surf->texture && !(batch->clear & (PIPE_CLEAR_COLOR0 << i));
+      if (surf && surf->texture) {
+         struct agx_resource *rt = agx_resource(surf->texture);
+         BITSET_SET(rt->data_valid, surf->u.tex.level);
+
+         if (!(batch->clear & (PIPE_CLEAR_COLOR0 << i)))
+            clear_pipeline_textures = true;
+      }
+   }
+
+   struct agx_resource *zbuf =
+      batch->key.zsbuf ? agx_resource(batch->key.zsbuf->texture) : NULL;
+
+   if (zbuf) {
+      unsigned level = batch->key.zsbuf->u.tex.level;
+      BITSET_SET(zbuf->data_valid, level);
+
+      if (zbuf->separate_stencil)
+         BITSET_SET(zbuf->separate_stencil->data_valid, level);
    }
 
    /* Scissor and depth bias arrays are staged to dynamic arrays on the CPU. At
@@ -1697,7 +1704,7 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
     *  - BO for internal shaders
     *  - BOs added to the batch explicitly
     */
-   agx_batch_add_bo(batch, batch->vdm.bo);
+   agx_batch_add_bo(batch, batch->encoder);
 
    /* Occlusion queries are allocated as a contiguous pool */
    unsigned oq_count =
@@ -1716,43 +1723,18 @@ agx_flush_render(struct agx_context *ctx, struct agx_batch *batch,
    unsigned cmd_3d_id = agx_get_global_id(dev);
    unsigned encoder_id = agx_get_global_id(dev);
 
-   agx_cmdbuf(dev, cmdbuf, att, &batch->pool, batch, &batch->key,
-              batch->vdm.bo->ptr.gpu, encoder_id, cmd_ta_id, cmd_3d_id, scissor,
-              zbias, batch->occlusion_buffer.gpu, pipeline_background,
+   struct attachments att = {.count = 0};
+   struct drm_asahi_cmd_render cmdbuf;
+
+   agx_cmdbuf(dev, &cmdbuf, &att, &batch->pool, batch, &batch->key,
+              batch->encoder->ptr.gpu, encoder_id, cmd_ta_id, cmd_3d_id,
+              scissor, zbias, batch->occlusion_buffer.gpu, pipeline_background,
               pipeline_background_partial, pipeline_store,
               clear_pipeline_textures, batch->clear_depth, batch->clear_stencil,
               &batch->tilebuffer_layout);
-}
 
-void
-agx_flush_batch(struct agx_context *ctx, struct agx_batch *batch)
-{
-   assert(agx_batch_is_active(batch));
-   assert(!agx_batch_is_submitted(batch));
-
-   struct attachments att = {.count = 0};
-   struct drm_asahi_cmd_render render;
-   struct drm_asahi_cmd_compute compute;
-   bool has_vdm = false, has_cdm = false;
-
-   if (batch->cdm.bo) {
-      assert(batch->any_draws && "Compute batches must be nonempty");
-      agx_flush_compute(ctx, batch, &compute);
-      has_cdm = true;
-   }
-
-   if (batch->vdm.bo && (batch->clear || batch->initialized)) {
-      agx_flush_render(ctx, batch, &render, &att);
-      has_vdm = true;
-   }
-
-   if (!has_cdm && !has_vdm) {
-      agx_batch_reset(ctx, batch);
-      return;
-   }
-
-   agx_batch_submit(ctx, batch, has_cdm ? &compute : NULL,
-                    has_vdm ? &render : NULL);
+   agx_batch_submit(ctx, batch, BARRIER_RENDER | BARRIER_COMPUTE,
+                    DRM_ASAHI_CMD_RENDER, &cmdbuf);
 }
 
 static void
@@ -1875,10 +1857,9 @@ agx_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
 
    ctx->blitter = util_blitter_create(pctx);
 
-   ctx->result_buf =
-      agx_bo_create(agx_device(screen),
-                    (2 * sizeof(union agx_batch_result)) * AGX_MAX_BATCHES,
-                    AGX_BO_WRITEBACK, "Batch result buffer");
+   ctx->result_buf = agx_bo_create(
+      agx_device(screen), sizeof(union agx_batch_result) * AGX_MAX_BATCHES,
+      AGX_BO_WRITEBACK, "Batch result buffer");
    assert(ctx->result_buf);
 
    /* Sync object/FD used for NATIVE_FENCE_FD. */
@@ -2514,18 +2495,6 @@ agx_screen_get_fd(struct pipe_screen *pscreen)
    return agx_device(pscreen)->fd;
 }
 
-static void
-agx_screen_get_device_uuid(struct pipe_screen *pscreen, char *uuid)
-{
-   agx_get_device_uuid(agx_device(pscreen), uuid);
-}
-
-static void
-agx_screen_get_driver_uuid(struct pipe_screen *pscreen, char *uuid)
-{
-   agx_get_driver_uuid(uuid);
-}
-
 struct pipe_screen *
 agx_screen_create(int fd, struct renderonly *ro,
                   const struct pipe_screen_config *config)
@@ -2582,8 +2551,6 @@ agx_screen_create(int fd, struct renderonly *ro,
    screen->get_shader_param = agx_get_shader_param;
    screen->get_compute_param = agx_get_compute_param;
    screen->get_paramf = agx_get_paramf;
-   screen->get_device_uuid = agx_screen_get_device_uuid;
-   screen->get_driver_uuid = agx_screen_get_driver_uuid;
    screen->is_format_supported = agx_is_format_supported;
    screen->query_dmabuf_modifiers = agx_query_dmabuf_modifiers;
    screen->is_dmabuf_modifier_supported = agx_is_dmabuf_modifier_supported;
