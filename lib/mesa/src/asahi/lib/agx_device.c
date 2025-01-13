@@ -14,7 +14,6 @@
 #include "drm-uapi/asahi_drm.h"
 #include "drm-uapi/dma-buf.h"
 #include "util/log.h"
-#include "util/mesa-sha1.h"
 #include "util/os_file.h"
 #include "util/os_mman.h"
 #include "util/simple_mtx.h"
@@ -342,7 +341,7 @@ agx_get_global_id(struct agx_device *dev)
 static ssize_t
 agx_get_params(struct agx_device *dev, void *buf, size_t size)
 {
-      struct drm_asahi_get_params get_param = {
+   struct drm_asahi_get_params get_param = {
       .param_group = 0,
       .pointer = (uint64_t)(uintptr_t)buf,
       .size = size,
@@ -456,6 +455,9 @@ agx_open_device(void *memctx, struct agx_device *dev)
 
    dev->vm_id = vm_create.vm_id;
 
+   dev->queue_id = agx_create_command_queue(
+      dev, DRM_ASAHI_QUEUE_CAP_RENDER | DRM_ASAHI_QUEUE_CAP_BLIT |
+              DRM_ASAHI_QUEUE_CAP_COMPUTE);
    agx_get_global_ids(dev);
 
    return true;
@@ -652,57 +654,4 @@ agx_debug_fault(struct agx_device *dev, uint64_t addr)
    }
 
    pthread_mutex_unlock(&dev->bo_map_lock);
-}
-
-/* (Re)define UUID_SIZE to avoid including vulkan.h (or p_defines.h) here. */
-#define UUID_SIZE 16
-
-void
-agx_get_device_uuid(const struct agx_device *dev, void *uuid)
-{
-   struct mesa_sha1 sha1_ctx;
-   _mesa_sha1_init(&sha1_ctx);
-
-   /* The device UUID uniquely identifies the given device within the machine.
-    * Since we never have more than one device, this doesn't need to be a real
-    * UUID, so we use SHA1("agx" + gpu_generation + gpu_variant + gpu_revision).
-    */
-   static const char *device_name = "agx";
-   _mesa_sha1_update(&sha1_ctx, device_name, strlen(device_name));
-
-   _mesa_sha1_update(&sha1_ctx, &dev->params.gpu_generation,
-                     sizeof(dev->params.gpu_generation));
-   _mesa_sha1_update(&sha1_ctx, &dev->params.gpu_variant,
-                     sizeof(dev->params.gpu_variant));
-   _mesa_sha1_update(&sha1_ctx, &dev->params.gpu_revision,
-                     sizeof(dev->params.gpu_revision));
-
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&sha1_ctx, sha1);
-
-   assert(SHA1_DIGEST_LENGTH >= UUID_SIZE);
-   memcpy(uuid, sha1, UUID_SIZE);
-}
-
-void
-agx_get_driver_uuid(void *uuid)
-{
-   const char *driver_id = PACKAGE_VERSION;
-
-   /* The driver UUID is used for determining sharability of images and memory
-    * between two Vulkan instances in separate processes, but also to
-    * determining memory objects and sharability between Vulkan and OpenGL
-    * driver. People who want to share memory need to also check the device
-    * UUID.
-    */
-   struct mesa_sha1 sha1_ctx;
-   _mesa_sha1_init(&sha1_ctx);
-
-   _mesa_sha1_update(&sha1_ctx, driver_id, strlen(driver_id));
-
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&sha1_ctx, sha1);
-
-   assert(SHA1_DIGEST_LENGTH >= UUID_SIZE);
-   memcpy(uuid, sha1, UUID_SIZE);
 }

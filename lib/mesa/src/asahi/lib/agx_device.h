@@ -127,7 +127,6 @@ int agx_export_sync_file(struct agx_device *dev, struct agx_bo *bo);
 
 void agx_debug_fault(struct agx_device *dev, uint64_t addr);
 
-void agx_get_device_uuid(const struct agx_device *dev, void *uuid);
-void agx_get_driver_uuid(void *uuid);
+void agx_bo_mmap(struct agx_bo *bo);
 
 #endif
