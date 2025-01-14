@@ -1272,13 +1272,6 @@ asahi_add_attachment(struct attachments *att, struct agx_resource *rsrc,
    att->list[idx].flags = 0;
 }
 
-static bool
-is_aligned(unsigned x, unsigned pot_alignment)
-{
-   assert(util_is_power_of_two_nonzero(pot_alignment));
-   return (x & (pot_alignment - 1)) == 0;
-}
-
 static void
 agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
            struct attachments *att, struct agx_pool *pool,
@@ -1350,16 +1343,6 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             c->depth_buffer_store = c->depth_buffer_load;
             c->depth_buffer_partial = c->depth_buffer_load;
 
-            /* Main stride in pages */
-            assert((zres->layout.depth_px == 1 ||
-                    is_aligned(zres->layout.layer_stride_B, AIL_PAGESIZE)) &&
-                   "Page aligned Z layers");
-
-            unsigned stride_pages = zres->layout.layer_stride_B / AIL_PAGESIZE;
-            c->depth_buffer_load_stride = ((stride_pages - 1) << 14) | 1;
-            c->depth_buffer_store_stride = c->depth_buffer_load_stride;
-            c->depth_buffer_partial_stride = c->depth_buffer_load_stride;
-
             assert(zres->layout.tiling != AIL_TILING_LINEAR && "must tile");
 
             if (ail_is_compressed(&zres->layout)) {
@@ -1369,20 +1352,8 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
                   (first_layer * zres->layout.compression_layer_stride_B) +
                   zres->layout.level_offsets_compressed_B[level];
 
-               /* Meta stride in cache lines */
-               assert(is_aligned(zres->layout.compression_layer_stride_B,
-                                 AIL_CACHELINE) &&
-                      "Cacheline aligned Z meta layers");
-               unsigned stride_lines =
-                  zres->layout.compression_layer_stride_B / AIL_CACHELINE;
-               c->depth_meta_buffer_load_stride = (stride_lines - 1) << 14;
-
                c->depth_meta_buffer_store = c->depth_meta_buffer_load;
-               c->depth_meta_buffer_store_stride =
-                  c->depth_meta_buffer_load_stride;
                c->depth_meta_buffer_partial = c->depth_meta_buffer_load;
-               c->depth_meta_buffer_partial_stride =
-                  c->depth_meta_buffer_load_stride;
 
                zls_control.z_compress_1 = true;
                zls_control.z_compress_2 = true;
@@ -1415,15 +1386,6 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             c->stencil_buffer_store = c->stencil_buffer_load;
             c->stencil_buffer_partial = c->stencil_buffer_load;
 
-            /* Main stride in pages */
-            assert((sres->layout.depth_px == 1 ||
-                    is_aligned(sres->layout.layer_stride_B, AIL_PAGESIZE)) &&
-                   "Page aligned S layers");
-            unsigned stride_pages = sres->layout.layer_stride_B / AIL_PAGESIZE;
-            c->stencil_buffer_load_stride = ((stride_pages - 1) << 14) | 1;
-            c->stencil_buffer_store_stride = c->stencil_buffer_load_stride;
-            c->stencil_buffer_partial_stride = c->stencil_buffer_load_stride;
-
             if (ail_is_compressed(&sres->layout)) {
                c->stencil_meta_buffer_load =
                   agx_map_texture_gpu(sres, 0) +
@@ -1431,20 +1393,8 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
                   (first_layer * sres->layout.compression_layer_stride_B) +
                   sres->layout.level_offsets_compressed_B[level];
 
-               /* Meta stride in cache lines */
-               assert(is_aligned(sres->layout.compression_layer_stride_B,
-                                 AIL_CACHELINE) &&
-                      "Cacheline aligned S meta layers");
-               unsigned stride_lines =
-                  sres->layout.compression_layer_stride_B / AIL_CACHELINE;
-               c->stencil_meta_buffer_load_stride = (stride_lines - 1) << 14;
-
                c->stencil_meta_buffer_store = c->stencil_meta_buffer_load;
-               c->stencil_meta_buffer_store_stride =
-                  c->stencil_meta_buffer_load_stride;
                c->stencil_meta_buffer_partial = c->stencil_meta_buffer_load;
-               c->stencil_meta_buffer_partial_stride =
-                  c->stencil_meta_buffer_load_stride;
 
                zls_control.s_compress_1 = true;
                zls_control.s_compress_2 = true;
@@ -1507,7 +1457,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->samples = tib->nr_samples;
    c->layers = 1;
 
-   c->ppp_multisamplectl = batch->uniforms.ppp_multisamplectl;
+   c->ppp_multisamplectl = batch->ppp_multisamplectl;
    c->sample_size = tib->sample_size_B;
 
    /* XXX OR 0x80 with eMRT? */
