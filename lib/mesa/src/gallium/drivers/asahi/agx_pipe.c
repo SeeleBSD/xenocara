@@ -1562,13 +1562,13 @@ agx_flush_compute(struct agx_context *ctx, struct agx_batch *batch)
       .encoder_end =
          batch->encoder->ptr.gpu +
          (batch->encoder_current - (uint8_t *)batch->encoder->ptr.cpu),
-      .buffer_descriptor = 0,
+      .helper_arg = 0,
       .buffer_descriptor_size = 0,
-      .ctx_switch_prog = 0,
+      .helper_program = 0,
       .encoder_id = encoder_id,
       .cmd_id = cmdbuf_id,
       .iogpu_unk_40 = 0x1c,
-      .iogpu_unk_44 = 0xffffffff,
+      .unk_mask = 0xffffffff,
    };
 
    agx_batch_submit(ctx, batch, BARRIER_RENDER | BARRIER_COMPUTE,
