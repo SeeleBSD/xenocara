@@ -829,7 +829,6 @@ agxdecode_drm_cmd_render(struct drm_asahi_params_global *params,
    DUMP_FIELD(c, "0x%llx", depth_bias_array);
    DUMP_FIELD(c, "%d", fb_width);
    DUMP_FIELD(c, "%d", fb_height);
-   DUMP_FIELD(c, "%d", layers);
    DUMP_FIELD(c, "0x%x", load_pipeline);
    DUMP_FIELD(c, "0x%x", load_pipeline_bind);
    agxdecode_stateful(c->load_pipeline & ~0x7, "Load pipeline", agxdecode_usc,
