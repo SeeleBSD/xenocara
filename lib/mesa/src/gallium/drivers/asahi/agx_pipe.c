@@ -1263,17 +1263,13 @@ asahi_add_attachment(struct attachments *att, struct agx_resource *rsrc,
    assert(att->count < MAX_ATTACHMENTS);
    int idx = att->count++;
 
-   att->list[idx].size = rsrc->layout.size_B;
+   /* We don't support layered rendering yet */
+   assert(surf->u.tex.first_layer == surf->u.tex.last_layer);
+
+   att->list[idx].size = rsrc->bo->size;
    att->list[idx].pointer = rsrc->bo->ptr.gpu;
    att->list[idx].order = 1; // TODO: What does this do?
    att->list[idx].flags = 0;
-}
-
-static bool
-is_aligned(unsigned x, unsigned pot_alignment)
-{
-   assert(util_is_power_of_two_nonzero(pot_alignment));
-   return (x & (pot_alignment - 1)) == 0;
 }
 
 static void
@@ -1294,15 +1290,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->cmd_3d_id = cmd_3d_id;
    c->cmd_ta_id = cmd_ta_id;
 
-   c->ppp_ctrl = 0x202;
-
-   /* bit 0 specifies OpenGL clip behaviour. If ARB_clip_control is advertised,
-    * we don't set it and lower in the vertex shader.
-    */
-#ifdef notyet
-   if (dev->debug & AGX_DBG_NOCLIPCTRL)
-      c->ppp_ctrl |= 0x1;
-#endif
+   c->ppp_ctrl = 0x203; // bit 0: OpenGL depth clipping
 
    c->fb_width = framebuffer->width;
    c->fb_height = framebuffer->height;
@@ -1342,27 +1330,18 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             sres = zsres->separate_stencil;
 
          if (zres) {
+            bool valid = agx_resource_valid(zres, level);
             bool clear = (batch->clear & PIPE_CLEAR_DEPTH);
             bool load = (batch->load & PIPE_CLEAR_DEPTH);
 
             zls_control.z_store_enable = (batch->resolve & PIPE_CLEAR_DEPTH);
-            zls_control.z_load_enable = !clear && load;
+            zls_control.z_load_enable = valid && !clear && load;
 
             c->depth_buffer_load = agx_map_texture_gpu(zres, first_layer) +
                                    ail_get_level_offset_B(&zres->layout, level);
 
             c->depth_buffer_store = c->depth_buffer_load;
             c->depth_buffer_partial = c->depth_buffer_load;
-
-            /* Main stride in pages */
-            assert((zres->layout.depth_px == 1 ||
-                    is_aligned(zres->layout.layer_stride_B, AIL_PAGESIZE)) &&
-                   "Page aligned Z layers");
-
-            unsigned stride_pages = zres->layout.layer_stride_B / AIL_PAGESIZE;
-            c->depth_buffer_load_stride = ((stride_pages - 1) << 14) | 1;
-            c->depth_buffer_store_stride = c->depth_buffer_load_stride;
-            c->depth_buffer_partial_stride = c->depth_buffer_load_stride;
 
             assert(zres->layout.tiling != AIL_TILING_LINEAR && "must tile");
 
@@ -1373,20 +1352,8 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
                   (first_layer * zres->layout.compression_layer_stride_B) +
                   zres->layout.level_offsets_compressed_B[level];
 
-               /* Meta stride in cache lines */
-               assert(is_aligned(zres->layout.compression_layer_stride_B,
-                                 AIL_CACHELINE) &&
-                      "Cacheline aligned Z meta layers");
-               unsigned stride_lines =
-                  zres->layout.compression_layer_stride_B / AIL_CACHELINE;
-               c->depth_meta_buffer_load_stride = (stride_lines - 1) << 14;
-
                c->depth_meta_buffer_store = c->depth_meta_buffer_load;
-               c->depth_meta_buffer_store_stride =
-                  c->depth_meta_buffer_load_stride;
                c->depth_meta_buffer_partial = c->depth_meta_buffer_load;
-               c->depth_meta_buffer_partial_stride =
-                  c->depth_meta_buffer_load_stride;
 
                zls_control.z_compress_1 = true;
                zls_control.z_compress_2 = true;
@@ -1405,11 +1372,12 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
          }
 
          if (sres) {
+            bool valid = agx_resource_valid(sres, zsbuf->u.tex.level);
             bool clear = (batch->clear & PIPE_CLEAR_STENCIL);
             bool load = (batch->load & PIPE_CLEAR_STENCIL);
 
             zls_control.s_store_enable = (batch->resolve & PIPE_CLEAR_STENCIL);
-            zls_control.s_load_enable = !clear && load;
+            zls_control.s_load_enable = valid && !clear && load;
 
             c->stencil_buffer_load =
                agx_map_texture_gpu(sres, first_layer) +
@@ -1418,15 +1386,6 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             c->stencil_buffer_store = c->stencil_buffer_load;
             c->stencil_buffer_partial = c->stencil_buffer_load;
 
-            /* Main stride in pages */
-            assert((sres->layout.depth_px == 1 ||
-                    is_aligned(sres->layout.layer_stride_B, AIL_PAGESIZE)) &&
-                   "Page aligned S layers");
-            unsigned stride_pages = sres->layout.layer_stride_B / AIL_PAGESIZE;
-            c->stencil_buffer_load_stride = ((stride_pages - 1) << 14) | 1;
-            c->stencil_buffer_store_stride = c->stencil_buffer_load_stride;
-            c->stencil_buffer_partial_stride = c->stencil_buffer_load_stride;
-
             if (ail_is_compressed(&sres->layout)) {
                c->stencil_meta_buffer_load =
                   agx_map_texture_gpu(sres, 0) +
@@ -1434,20 +1393,8 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
                   (first_layer * sres->layout.compression_layer_stride_B) +
                   sres->layout.level_offsets_compressed_B[level];
 
-               /* Meta stride in cache lines */
-               assert(is_aligned(sres->layout.compression_layer_stride_B,
-                                 AIL_CACHELINE) &&
-                      "Cacheline aligned S meta layers");
-               unsigned stride_lines =
-                  sres->layout.compression_layer_stride_B / AIL_CACHELINE;
-               c->stencil_meta_buffer_load_stride = (stride_lines - 1) << 14;
-
                c->stencil_meta_buffer_store = c->stencil_meta_buffer_load;
-               c->stencil_meta_buffer_store_stride =
-                  c->stencil_meta_buffer_load_stride;
                c->stencil_meta_buffer_partial = c->stencil_meta_buffer_load;
-               c->stencil_meta_buffer_partial_stride =
-                  c->stencil_meta_buffer_load_stride;
 
                zls_control.s_compress_1 = true;
                zls_control.s_compress_2 = true;
@@ -1480,7 +1427,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
       cfg.uniforms = 4 + (framebuffer->nr_cbufs * 8);
 
       bool spills = agx_tilebuffer_spills(&batch->tilebuffer_layout);
-      unsigned nr_tex_per_rt = (spills || clear_pipeline_textures) ? 2 : 0;
+      unsigned nr_tex_per_rt = spills ? 2 : clear_pipeline_textures ? 1 : 0;
       cfg.texture_states = framebuffer->nr_cbufs * nr_tex_per_rt;
 
       cfg.sampler_states = clear_pipeline_textures
@@ -1508,9 +1455,9 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->utile_height = tib->tile_size.height;
 
    c->samples = tib->nr_samples;
-   c->layers = MAX2(util_framebuffer_get_num_layers(framebuffer), 1);
+   c->layers = 1;
 
-   c->ppp_multisamplectl = batch->uniforms.ppp_multisamplectl;
+   c->ppp_multisamplectl = batch->ppp_multisamplectl;
    c->sample_size = tib->sample_size_B;
 
    /* XXX OR 0x80 with eMRT? */
@@ -1521,7 +1468,7 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->merge_upper_y = fui(tan_60 / framebuffer->height);
 
    agx_pack(&c->partial_reload_pipeline_bind, COUNTS, cfg) {
-      cfg.texture_states = framebuffer->nr_cbufs * 2;
+      cfg.texture_states = framebuffer->nr_cbufs;
       cfg.sampler_states = AGX_SAMPLER_STATES_4_COMPACT;
       cfg.unknown = 0xFFFF;
    }
@@ -1538,17 +1485,11 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
    c->depth_bias_array = depth_bias_ptr;
    c->visibility_result_buffer = visibility_result_ptr;
 
-   c->vertex_sampler_array = 0;
-   c->vertex_sampler_count = 0;
-   c->vertex_sampler_max = 1;
-
-   /* In the future we could split the heaps if useful */
-   c->fragment_sampler_array = c->vertex_sampler_array;
-   c->fragment_sampler_count = c->vertex_sampler_count;
-   c->fragment_sampler_max = c->vertex_sampler_max;
-
    // TODO: optimize
    c->flags |= ASAHI_RENDER_PROCESS_EMPTY_TILES;
+
+   if (dev->debug & AGX_DBG_SYNCTVB)
+      c->flags |= ASAHI_RENDER_SYNC_TVB_GROWTH;
 
    for (unsigned i = 0; i < framebuffer->nr_cbufs; ++i) {
       if (!framebuffer->cbufs[i])
