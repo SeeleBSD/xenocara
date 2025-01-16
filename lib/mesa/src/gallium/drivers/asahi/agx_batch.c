@@ -766,7 +766,6 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
       assert(!ret);
 
       if (dev->debug & AGX_DBG_TRACE) {
-         /* agxdecode DRM commands */
          switch (cmd_type) {
          case DRM_ASAHI_CMD_RENDER:
             agxdecode_drm_cmd_render(&dev->params, cmdbuf, true);
@@ -790,9 +789,6 @@ agx_batch_submit(struct agx_context *ctx, struct agx_batch *batch,
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
-
-   /* Elide printing stats */
-   batch->result = NULL;
 
    /* Try to clean up up to two batches, to keep memory usage down */
    if (agx_cleanup_batches(ctx) >= 0)
@@ -855,6 +851,9 @@ agx_batch_reset(struct agx_context *ctx, struct agx_batch *batch)
 
    if (ctx->batch == batch)
       ctx->batch = NULL;
+
+   /* Elide printing stats */
+   batch->result = NULL;
 
    agx_batch_cleanup(ctx, batch, true);
 }

@@ -33,6 +33,7 @@
 #include "util/u_gen_mipmap.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
+#include "util/u_process.h"
 #include "util/u_screen.h"
 #include "util/u_upload_mgr.h"
 #include "util/xmlconfig.h"
@@ -184,13 +185,6 @@ agx_resource_setup(struct agx_device *dev, struct agx_resource *nresource)
       .sample_count_sa = MAX2(templ->nr_samples, 1),
       .levels = templ->last_level + 1,
       .writeable_image = templ->bind & PIPE_BIND_SHADER_IMAGE,
-
-      /* Ostensibly this should be based on the bind, but Gallium bind flags are
-       * notoriously unreliable. The only cost of setting this excessively is a
-       * bit of extra memory use for layered textures, which isn't worth trying
-       * to optimize.
-       */
-      .renderable = true,
    };
 }
 
@@ -382,20 +376,17 @@ agx_linear_allowed(const struct agx_resource *pres)
       return false;
 
    switch (pres->base.target) {
-   /* Buffers are always linear, even with image atomics */
+   /* 1D is always linear, even with image atomics */
    case PIPE_BUFFER:
+   case PIPE_TEXTURE_1D:
+   case PIPE_TEXTURE_1D_ARRAY:
 
    /* Linear textures require specifying their strides explicitly, which only
     * works for 2D textures. Rectangle textures are a special case of 2D.
     *
-    * 1D textures only exist in GLES and are lowered to 2D to bypass hardware
-    * limitations.
-    *
     * However, we don't want to support this case in the image atomic
     * implementation, so linear shader images are specially forbidden.
     */
-   case PIPE_TEXTURE_1D:
-   case PIPE_TEXTURE_1D_ARRAY:
    case PIPE_TEXTURE_2D:
    case PIPE_TEXTURE_2D_ARRAY:
    case PIPE_TEXTURE_RECT:
@@ -434,6 +425,15 @@ agx_compression_allowed(const struct agx_resource *pres)
    if (agx_device(pres->base.screen)->debug & AGX_DBG_NOCOMPRESS) {
       rsrc_debug(pres, "No compression: disabled\n");
       return false;
+   }
+
+   /* Workaround for https://github.com/supertuxkart/stk-code/issues/4863
+    *
+    * XXX: Fix upstream or at least driconf, this is terrible.
+    */
+   if (strcmp(util_get_process_name(), "supertuxkart") == 0) {
+      if (pres->base.bind & PIPE_BIND_DEPTH_STENCIL)
+         return false;
    }
 
    /* Limited to renderable */
@@ -1272,6 +1272,13 @@ asahi_add_attachment(struct attachments *att, struct agx_resource *rsrc,
    att->list[idx].flags = 0;
 }
 
+static bool
+is_aligned(unsigned x, unsigned pot_alignment)
+{
+   assert(util_is_power_of_two_nonzero(pot_alignment));
+   return (x & (pot_alignment - 1)) == 0;
+}
+
 static void
 agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
            struct attachments *att, struct agx_pool *pool,
@@ -1343,6 +1350,16 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             c->depth_buffer_store = c->depth_buffer_load;
             c->depth_buffer_partial = c->depth_buffer_load;
 
+            /* Main stride in pages */
+            assert((zres->layout.depth_px == 1 ||
+                    is_aligned(zres->layout.layer_stride_B, AIL_PAGESIZE)) &&
+                   "Page aligned Z layers");
+
+            unsigned stride_pages = zres->layout.layer_stride_B / AIL_PAGESIZE;
+            c->depth_buffer_load_stride = ((stride_pages - 1) << 14) | 1;
+            c->depth_buffer_store_stride = c->depth_buffer_load_stride;
+            c->depth_buffer_partial_stride = c->depth_buffer_load_stride;
+
             assert(zres->layout.tiling != AIL_TILING_LINEAR && "must tile");
 
             if (ail_is_compressed(&zres->layout)) {
@@ -1352,8 +1369,20 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
                   (first_layer * zres->layout.compression_layer_stride_B) +
                   zres->layout.level_offsets_compressed_B[level];
 
+               /* Meta stride in cache lines */
+               assert(is_aligned(zres->layout.compression_layer_stride_B,
+                                 AIL_CACHELINE) &&
+                      "Cacheline aligned Z meta layers");
+               unsigned stride_lines =
+                  zres->layout.compression_layer_stride_B / AIL_CACHELINE;
+               c->depth_meta_buffer_load_stride = (stride_lines - 1) << 14;
+
                c->depth_meta_buffer_store = c->depth_meta_buffer_load;
+               c->depth_meta_buffer_store_stride =
+                  c->depth_meta_buffer_load_stride;
                c->depth_meta_buffer_partial = c->depth_meta_buffer_load;
+               c->depth_meta_buffer_partial_stride =
+                  c->depth_meta_buffer_load_stride;
 
                zls_control.z_compress_1 = true;
                zls_control.z_compress_2 = true;
@@ -1386,6 +1415,15 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
             c->stencil_buffer_store = c->stencil_buffer_load;
             c->stencil_buffer_partial = c->stencil_buffer_load;
 
+            /* Main stride in pages */
+            assert((sres->layout.depth_px == 1 ||
+                    is_aligned(sres->layout.layer_stride_B, AIL_PAGESIZE)) &&
+                   "Page aligned S layers");
+            unsigned stride_pages = sres->layout.layer_stride_B / AIL_PAGESIZE;
+            c->stencil_buffer_load_stride = ((stride_pages - 1) << 14) | 1;
+            c->stencil_buffer_store_stride = c->stencil_buffer_load_stride;
+            c->stencil_buffer_partial_stride = c->stencil_buffer_load_stride;
+
             if (ail_is_compressed(&sres->layout)) {
                c->stencil_meta_buffer_load =
                   agx_map_texture_gpu(sres, 0) +
@@ -1393,8 +1431,20 @@ agx_cmdbuf(struct agx_device *dev, struct drm_asahi_cmd_render *c,
                   (first_layer * sres->layout.compression_layer_stride_B) +
                   sres->layout.level_offsets_compressed_B[level];
 
+               /* Meta stride in cache lines */
+               assert(is_aligned(sres->layout.compression_layer_stride_B,
+                                 AIL_CACHELINE) &&
+                      "Cacheline aligned S meta layers");
+               unsigned stride_lines =
+                  sres->layout.compression_layer_stride_B / AIL_CACHELINE;
+               c->stencil_meta_buffer_load_stride = (stride_lines - 1) << 14;
+
                c->stencil_meta_buffer_store = c->stencil_meta_buffer_load;
+               c->stencil_meta_buffer_store_stride =
+                  c->stencil_meta_buffer_load_stride;
                c->stencil_meta_buffer_partial = c->stencil_meta_buffer_load;
+               c->stencil_meta_buffer_partial_stride =
+                  c->stencil_meta_buffer_load_stride;
 
                zls_control.s_compress_1 = true;
                zls_control.s_compress_2 = true;
@@ -1563,7 +1613,7 @@ agx_flush_compute(struct agx_context *ctx, struct agx_batch *batch)
          batch->encoder->ptr.gpu +
          (batch->encoder_current - (uint8_t *)batch->encoder->ptr.cpu),
       .helper_arg = 0,
-      .buffer_descriptor_size = 0,
+      .helper_unk = 0,
       .helper_program = 0,
       .encoder_id = encoder_id,
       .cmd_id = cmdbuf_id,
@@ -1819,8 +1869,6 @@ agx_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
    /* By default all samples are enabled */
    ctx->sample_mask = ~0;
 
-   ctx->support_lod_bias = !(flags & PIPE_CONTEXT_NO_LOD_BIAS);
-
    return pctx;
 }
 
@@ -1926,9 +1974,6 @@ agx_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_SURFACE_SAMPLE_COUNT:
       /* TODO: MSRTT */
       return 0;
-
-   case PIPE_CAP_CUBE_MAP_ARRAY:
-      return is_deqp;
 
    case PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS:
       return 0;
@@ -2046,9 +2091,6 @@ agx_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MAP_UNSYNCHRONIZED_THREAD_SAFE:
       return 1;
 
-   case PIPE_CAP_VS_LAYER_VIEWPORT:
-      return is_deqp;
-
    default:
       return u_pipe_screen_get_param_defaults(pscreen, param);
    }
@@ -2140,7 +2182,7 @@ agx_get_shader_param(struct pipe_screen *pscreen, enum pipe_shader_type shader,
       return 16;
 
    case PIPE_SHADER_CAP_CONT_SUPPORTED:
-      return 1;
+      return 0;
 
    case PIPE_SHADER_CAP_INDIRECT_INPUT_ADDR:
    case PIPE_SHADER_CAP_INDIRECT_OUTPUT_ADDR:
@@ -2163,6 +2205,7 @@ agx_get_shader_param(struct pipe_screen *pscreen, enum pipe_shader_type shader,
       return false;
 
    case PIPE_SHADER_CAP_INT64_ATOMICS:
+   case PIPE_SHADER_CAP_DROUND_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       return 0;
 

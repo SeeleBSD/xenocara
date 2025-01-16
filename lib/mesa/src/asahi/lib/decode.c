@@ -338,14 +338,13 @@ agxdecode_stateful(uint64_t va, const char *label, decode_cmd decoder,
       if (count == STATE_DONE) {
          break;
       } else if (count == STATE_LINK) {
-         fprintf(agxdecode_dump_stream, "Linking to 0x%" PRIx64 "\n\n", link);
+         fprintf(agxdecode_dump_stream, "Linking to 0x%lx\n\n", link);
          va = link;
          left = len = agxdecode_fetch_gpu_array(va, buf);
          map = buf;
       } else if (count == STATE_CALL) {
-         fprintf(agxdecode_dump_stream,
-                 "Calling 0x%" PRIx64 " (return = 0x%" PRIx64 ")\n\n", link,
-                 va + 8);
+         fprintf(agxdecode_dump_stream, "Calling 0x%lx (return = 0x%lx)\n\n",
+                 link, va + 8);
          assert(sp < ARRAY_SIZE(stack));
          stack[sp++] = va + 8;
          va = link;
@@ -354,7 +353,7 @@ agxdecode_stateful(uint64_t va, const char *label, decode_cmd decoder,
       } else if (count == STATE_RET) {
          assert(sp > 0);
          va = stack[--sp];
-         fprintf(agxdecode_dump_stream, "Returning to 0x%" PRIx64 "\n\n", va);
+         fprintf(agxdecode_dump_stream, "Returning to 0x%lx\n\n", va);
          left = len = agxdecode_fetch_gpu_array(va, buf);
          map = buf;
       } else {
@@ -829,6 +828,7 @@ agxdecode_drm_cmd_render(struct drm_asahi_params_global *params,
    DUMP_FIELD(c, "0x%llx", depth_bias_array);
    DUMP_FIELD(c, "%d", fb_width);
    DUMP_FIELD(c, "%d", fb_height);
+   DUMP_FIELD(c, "%d", layers);
    DUMP_FIELD(c, "0x%x", load_pipeline);
    DUMP_FIELD(c, "0x%x", load_pipeline_bind);
    agxdecode_stateful(c->load_pipeline & ~0x7, "Load pipeline", agxdecode_usc,

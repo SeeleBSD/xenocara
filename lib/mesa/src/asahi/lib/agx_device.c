@@ -578,7 +578,7 @@ int
 agx_import_sync_file(struct agx_device *dev, struct agx_bo *bo, int fd)
 {
    struct drm_prime_handle import_sync_file_ioctl = {
-     .fd = fd,
+      .fd = fd,
      .flags = 0x4,
      .handle = bo->handle,
    };
