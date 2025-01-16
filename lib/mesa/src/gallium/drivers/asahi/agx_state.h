@@ -140,6 +140,9 @@ struct PACKED agx_draw_uniforms {
 
    /* glSampleMask */
    uint16_t sample_mask;
+
+   /* Nonzero if the last vertex stage writes the layer ID, zero otherwise */
+   uint16_t layer_id_written;
 };
 
 struct PACKED agx_stage_uniforms {
@@ -353,6 +356,7 @@ struct asahi_fs_shader_key {
    uint8_t clip_plane_enable;
    uint8_t nr_samples;
    bool multisample;
+   bool layered;
    enum pipe_format rt_formats[PIPE_MAX_COLOR_BUFS];
 };
 
@@ -396,6 +400,9 @@ struct agx_context {
    struct pipe_context base;
    struct agx_compiled_shader *vs, *fs;
    uint32_t dirty;
+
+   /* Acts as a context-level shader key */
+   bool support_lod_bias;
 
    /* Set of batches. When full, the LRU entry (the batch with the smallest
     * seqnum) is flushed to free a slot.

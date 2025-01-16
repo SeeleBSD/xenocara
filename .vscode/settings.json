@@ -6,6 +6,8 @@
         "xf86drm.h": "c",
         "bitset": "c",
         "asahi_drm.h": "c",
-        "compare": "c"
+        "compare": "c",
+        "simple_mtx.h": "c",
+        "u_format.h": "c"
     }
 }
