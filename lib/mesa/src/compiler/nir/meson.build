@@ -113,12 +113,12 @@ files_libnir = files(
   'nir_dominance.c',
   'nir_format_convert.h',
   'nir_from_ssa.c',
-  'nir_functions.c',
   'nir_gather_info.c',
   'nir_gather_types.c',
   'nir_gather_xfb_info.c',
   'nir_group_loads.c',
   'nir_gs_count_vertices.c',
+  'nir_inline_functions.c',
   'nir_inline_uniforms.c',
   'nir_instr_set.c',
   'nir_instr_set.h',
@@ -311,10 +311,11 @@ _libnir = static_library(
   [files_libnir, nir_opt_algebraic_c, nir_opcodes_c,
    nir_opcodes_h, nir_constant_expressions_c, nir_builder_opcodes_h,
    nir_intrinsics_c, nir_intrinsics_h, nir_intrinsics_indices_h],
-  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
+  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_compiler],
   c_args : [c_msvc_compat_args, no_override_init_args],
   gnu_symbol_visibility : 'hidden',
-  dependencies : [idep_compiler, dep_valgrind],
+  dependencies : dep_valgrind,
+  link_with : libcompiler,
   build_by_default : false,
 )
 
@@ -322,14 +323,13 @@ inc_nir = include_directories('.')
 
 # Headers-only dependency
 idep_nir_headers = declare_dependency(
-  sources : [nir_opcodes_h, nir_builder_opcodes_h, nir_intrinsics_h, nir_intrinsics_indices_h,
-             ir_expression_operation_h, builtin_types_h, builtin_types_cpp_h],
-  include_directories : [inc_nir, inc_compiler],
+  sources : [nir_opcodes_h, nir_builder_opcodes_h, nir_intrinsics_h, nir_intrinsics_indices_h],
+  include_directories : inc_nir,
 )
 
 # Also link with nir
 idep_nir = declare_dependency(
-  dependencies : [idep_nir_headers, idep_mesautil, idep_compiler],
+  dependencies : [idep_nir_headers, idep_mesautil],
   link_with : _libnir,
 )
 

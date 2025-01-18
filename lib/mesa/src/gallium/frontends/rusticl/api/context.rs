@@ -1,6 +1,7 @@
 use crate::api::icd::*;
 use crate::api::types::*;
 use crate::api::util::*;
+use crate::cl_closure;
 use crate::core::context::*;
 use crate::core::device::get_devs_for_type;
 use crate::core::platform::*;
@@ -40,13 +41,10 @@ fn create_context(
     properties: *const cl_context_properties,
     num_devices: cl_uint,
     devices: *const cl_device_id,
-    pfn_notify: Option<FuncCreateContextCB>,
+    pfn_notify: Option<CreateContextCB>,
     user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<cl_context> {
-    // TODO: Actually hook this callback up so it gets called when appropriate.
-    // SAFETY: The requirements on `CreateContextCB::try_new` match the requirements
-    // imposed by the OpenCL specification. It is the caller's duty to uphold them.
-    let _cb_opt = unsafe { CreateContextCB::try_new(pfn_notify, user_data)? };
+    check_cb(&pfn_notify, user_data)?;
 
     // CL_INVALID_VALUE if devices is NULL.
     if devices.is_null() {
@@ -86,7 +84,7 @@ fn create_context(
 fn create_context_from_type(
     properties: *const cl_context_properties,
     device_type: cl_device_type,
-    pfn_notify: Option<FuncCreateContextCB>,
+    pfn_notify: Option<CreateContextCB>,
     user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<cl_context> {
     // CL_INVALID_DEVICE_TYPE if device_type is not a valid value.
@@ -126,15 +124,19 @@ fn release_context(context: cl_context) -> CLResult<()> {
 #[cl_entrypoint]
 fn set_context_destructor_callback(
     context: cl_context,
-    pfn_notify: ::std::option::Option<FuncDeleteContextCB>,
+    pfn_notify: ::std::option::Option<DeleteContextCB>,
     user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<()> {
     let c = context.get_ref()?;
 
-    // SAFETY: The requirements on `DeleteContextCB::new` match the requirements
-    // imposed by the OpenCL specification. It is the caller's duty to uphold them.
-    let cb = unsafe { DeleteContextCB::new(pfn_notify, user_data)? };
+    // CL_INVALID_VALUE if pfn_notify is NULL.
+    if pfn_notify.is_none() {
+        return Err(CL_INVALID_VALUE);
+    }
 
-    c.dtors.lock().unwrap().push(cb);
+    c.dtors
+        .lock()
+        .unwrap()
+        .push(cl_closure!(|c| pfn_notify(c, user_data)));
     Ok(())
 }

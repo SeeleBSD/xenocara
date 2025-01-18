@@ -39,19 +39,6 @@ struct anv_queue;
 struct anv_query_pool;
 struct anv_utrace_submit;
 
-enum anv_vm_bind_op {
-   ANV_VM_BIND,
-   ANV_VM_UNBIND,
-};
-
-struct anv_vm_bind {
-   struct anv_bo *bo;  /* Or NULL in case of a NULL binding. */
-   uint64_t address;   /* Includes the resource offset. */
-   uint64_t bo_offset; /* Also known as the memory offset. */
-   uint64_t size;
-   enum anv_vm_bind_op op;
-};
-
 struct anv_kmd_backend {
    /*
     * Create a gem buffer.
@@ -68,16 +55,11 @@ struct anv_kmd_backend {
    void *(*gem_mmap)(struct anv_device *device, struct anv_bo *bo,
                      uint64_t offset, uint64_t size,
                      VkMemoryPropertyFlags property_flags);
-   /* Bind things however you want. */
-   int (*vm_bind)(struct anv_device *device, int num_binds,
-                  struct anv_vm_bind *binds);
-   /* Fully bind or unbind a BO. */
-   int (*vm_bind_bo)(struct anv_device *device, struct anv_bo *bo);
-   int (*vm_unbind_bo)(struct anv_device *device, struct anv_bo *bo);
+   int (*gem_vm_bind)(struct anv_device *device, struct anv_bo *bo);
+   int (*gem_vm_unbind)(struct anv_device *device, struct anv_bo *bo);
    VkResult (*execute_simple_batch)(struct anv_queue *queue,
                                     struct anv_bo *batch_bo,
-                                    uint32_t batch_bo_size,
-                                    bool is_companion_rcs_batch);
+                                    uint32_t batch_bo_size);
    VkResult (*queue_exec_locked)(struct anv_queue *queue,
                                  uint32_t wait_count,
                                  const struct vk_sync_wait *waits,
@@ -86,12 +68,9 @@ struct anv_kmd_backend {
                                  uint32_t signal_count,
                                  const struct vk_sync_signal *signals,
                                  struct anv_query_pool *perf_query_pool,
-                                 uint32_t perf_query_pass,
-                                 struct anv_utrace_submit *utrace_submit);
+                                 uint32_t perf_query_pass);
    VkResult (*queue_exec_trace)(struct anv_queue *queue,
                                 struct anv_utrace_submit *submit);
-   uint32_t (*bo_alloc_flags_to_bo_flags)(struct anv_device *device,
-                                          enum anv_bo_alloc_flags alloc_flags);
 };
 
 const struct anv_kmd_backend *anv_kmd_backend_get(enum intel_kmd_type type);

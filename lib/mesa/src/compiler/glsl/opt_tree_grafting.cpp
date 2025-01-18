@@ -386,8 +386,7 @@ tree_grafting_basic_block(ir_instruction *bb_first,
 
       if (!entry->declaration ||
 	  entry->assigned_count != 1 ||
-          entry->referenced_count != 2 ||
-          entry->is_global)
+	  entry->referenced_count != 2)
 	 continue;
 
       /* Found a possibly graftable assignment.  Now, walk through the

@@ -29,8 +29,15 @@
 bool
 xe_gem_read_render_timestamp(int fd, uint64_t *value)
 {
-   /* TODO: re-implement with DRM_XE_QUERY_CS_CYCLES */
-   return false;
+   struct drm_xe_mmio mmio = {
+      .addr = RCS_TIMESTAMP,
+      .flags = DRM_XE_MMIO_READ | DRM_XE_MMIO_64BIT,
+   };
+   if (intel_ioctl(fd, DRM_IOCTL_XE_MMIO, &mmio))
+      return false;
+
+   *value = mmio.value;
+   return true;
 }
 
 bool

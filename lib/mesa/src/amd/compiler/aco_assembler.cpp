@@ -48,7 +48,7 @@ struct asm_context {
    std::map<unsigned, constaddr_info> constaddrs;
    std::map<unsigned, constaddr_info> resumeaddrs;
    std::vector<struct aco_symbol>* symbols;
-   Block* loop_header = NULL;
+   Block* loop_header;
    const int16_t* opcode;
    // TODO: keep track of branch instructions referring blocks
    // and, when emitting the block, correct the offset in instr
@@ -795,7 +795,8 @@ emit_instruction(asm_context& ctx, std::vector<uint32_t>& out, Instruction* inst
          encoding |= dpp.neg[1] << 22;
          encoding |= dpp.abs[0] << 21;
          encoding |= dpp.neg[0] << 20;
-         encoding |= dpp.fetch_inactive << 18;
+         if (ctx.gfx_level >= GFX10)
+            encoding |= 1 << 18; /* set Fetch Inactive to match GFX9 behaviour */
          encoding |= dpp.bound_ctrl << 19;
          encoding |= dpp.dpp_ctrl << 8;
          encoding |= reg(ctx, dpp_op, 8);
@@ -808,12 +809,13 @@ emit_instruction(asm_context& ctx, std::vector<uint32_t>& out, Instruction* inst
 
          /* first emit the instruction without the DPP operand */
          Operand dpp_op = instr->operands[0];
-         instr->operands[0] = Operand(PhysReg{233u + dpp.fetch_inactive}, v1);
+         instr->operands[0] = Operand(PhysReg{234}, v1);
          instr->format = (Format)((uint16_t)instr->format & ~(uint16_t)Format::DPP8);
          emit_instruction(ctx, out, instr);
          uint32_t encoding = reg(ctx, dpp_op, 8);
          encoding |= dpp.opsel[0] && !instr->isVOP3() ? 128 : 0;
-         encoding |= dpp.lane_sel << 8;
+         for (unsigned i = 0; i < 8; ++i)
+            encoding |= dpp.lane_sel[i] << (8 + i * 3);
          out.push_back(encoding);
          return;
       } else if (instr->isVOP3()) {
@@ -1001,20 +1003,27 @@ fix_exports(asm_context& ctx, std::vector<uint32_t>& out, Program* program)
                   break;
                }
             } else {
-               exp.done = true;
-               exp.valid_mask = true;
+               if (!program->info.has_epilog) {
+                  exp.done = true;
+                  exp.valid_mask = true;
+               }
                exported = true;
                break;
             }
          } else if ((*it)->definitions.size() && (*it)->definitions[0].physReg() == exec) {
             break;
          } else if ((*it)->opcode == aco_opcode::s_setpc_b64) {
+            /* Do not abort if the main FS has an epilog because it only
+             * exports MRTZ (if present) and the epilog exports colors.
+             */
+            exported |= program->stage.hw == AC_HW_PIXEL_SHADER && program->info.has_epilog;
+
             /* Do not abort for VS/TES as NGG if they are non-monolithic shaders
              * because a jump would be emitted.
              */
             exported |= (program->stage.sw == SWStage::VS || program->stage.sw == SWStage::TES) &&
                         program->stage.hw == AC_HW_NEXT_GEN_GEOMETRY_SHADER &&
-                        program->info.merged_shader_compiled_separately;
+                        !program->info.is_monolithic;
          }
          ++it;
       }
@@ -1226,11 +1235,7 @@ fix_constaddrs(asm_context& ctx, std::vector<uint32_t>& out)
 void
 align_block(asm_context& ctx, std::vector<uint32_t>& code, Block& block)
 {
-   /* Blocks with block_kind_loop_exit might be eliminated after jump threading, so we instead find
-    * loop exits using loop_nest_depth.
-    */
-   if (ctx.loop_header && !block.linear_preds.empty() &&
-       block.loop_nest_depth < ctx.loop_header->loop_nest_depth) {
+   if (block.kind & block_kind_loop_exit && ctx.loop_header) {
       Block* loop_header = ctx.loop_header;
       ctx.loop_header = NULL;
       std::vector<uint32_t> nops;
@@ -1294,7 +1299,7 @@ emit_program(Program* program, std::vector<uint32_t>& code, std::vector<struct a
    asm_context ctx(program, symbols);
 
    /* Prolog has no exports. */
-   if (!program->is_prolog && !program->info.has_epilog &&
+   if (!program->is_prolog &&
        (program->stage.hw == AC_HW_VERTEX_SHADER || program->stage.hw == AC_HW_PIXEL_SHADER ||
         program->stage.hw == AC_HW_NEXT_GEN_GEOMETRY_SHADER))
       fix_exports(ctx, code, program);

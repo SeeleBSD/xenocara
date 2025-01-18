@@ -100,4 +100,3 @@ profile = "quick_gl"
 process_isolation = true
 skips = ["/install/zink-anv-tgl-premerge-skips.txt"]
 timeout = 180.0
-fraction = 2

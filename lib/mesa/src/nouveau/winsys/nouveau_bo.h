@@ -43,6 +43,7 @@ struct nouveau_ws_bo {
    atomic_uint_fast32_t refcnt;
 };
 
+#if NVK_NEW_UAPI == 1
 uint64_t nouveau_ws_alloc_vma(struct nouveau_ws_device *dev,
                               uint64_t size, uint64_t align, bool sparse);
 
@@ -57,6 +58,7 @@ void nouveau_ws_bo_bind_vma(struct nouveau_ws_device *dev,
                             uint32_t pte_kind);
 void nouveau_ws_bo_unbind_vma(struct nouveau_ws_device *dev,
                               uint64_t offset, uint64_t range);
+#endif
 
 struct nouveau_ws_bo *nouveau_ws_bo_new(struct nouveau_ws_device *,
                                         uint64_t size, uint64_t align,

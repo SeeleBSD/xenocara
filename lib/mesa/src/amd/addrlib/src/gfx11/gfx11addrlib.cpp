@@ -728,21 +728,15 @@ ChipFamily Gfx11Lib::HwlConvertChipFamily(
 
     switch (chipFamily)
     {
-        case FAMILY_NV3:
-            if (ASICREV_IS_NAVI31_P(chipRevision))
+        case FAMILY_GFX1100:
+            if (ASICREV_IS_GFX1100(chipRevision))
             {
             }
-            if (ASICREV_IS_NAVI32_P(chipRevision))
+            if (ASICREV_IS_GFX1101(chipRevision))
             {
             }
-            if (ASICREV_IS_NAVI33_P(chipRevision))
+            if (ASICREV_IS_GFX1102(chipRevision))
             {
-            }
-            break;
-        case FAMILY_GFX1150:
-            if (ASICREV_IS_GFX1150(chipRevision))
-            {
-                m_settings.isGfx1150 = 1;
             }
             break;
         case FAMILY_GFX1103:
@@ -1337,7 +1331,6 @@ UINT_32 Gfx11Lib::GetValidDisplaySwizzleModes(
 
         if (false
             || (m_settings.isGfx1103)
-            || (m_settings.isGfx1150)
            )
         {
             // Not all GPUs support displaying with 256kB swizzle modes.

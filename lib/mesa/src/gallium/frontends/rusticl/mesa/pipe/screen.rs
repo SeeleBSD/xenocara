@@ -103,7 +103,7 @@ impl PipeScreen {
                 (*self.screen).context_create.unwrap()(
                     self.screen,
                     ptr::null_mut(),
-                    PIPE_CONTEXT_COMPUTE_ONLY | PIPE_CONTEXT_NO_LOD_BIAS,
+                    0, //PIPE_CONTEXT_COMPUTE_ONLY,
                 )
             },
             self,
@@ -216,7 +216,7 @@ impl PipeScreen {
         tmpl.height0 = height;
         tmpl.depth0 = depth;
         tmpl.array_size = array_size;
-        tmpl.bind = PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_LINEAR;
+        tmpl.bind = PIPE_BIND_SAMPLER_VIEW;
 
         if support_image {
             tmpl.bind |= PIPE_BIND_SHADER_IMAGE;
@@ -234,22 +234,17 @@ impl PipeScreen {
     }
 
     fn compute_param_wrapped(&self, cap: pipe_compute_cap, ptr: *mut c_void) -> i32 {
+        let s = &mut unsafe { *self.screen };
         unsafe {
-            (*self.screen).get_compute_param.unwrap()(
-                self.screen,
-                pipe_shader_ir::PIPE_SHADER_IR_NIR,
-                cap,
-                ptr,
-            )
+            s.get_compute_param.unwrap()(self.screen, pipe_shader_ir::PIPE_SHADER_IR_NIR, cap, ptr)
         }
     }
 
-    pub fn driver_name(&self) -> String {
-        self.ldev.driver_name()
-    }
-
     pub fn name(&self) -> String {
-        unsafe { c_string_to_string((*self.screen).get_name.unwrap()(self.screen)) }
+        unsafe {
+            let s = *self.screen;
+            c_string_to_string(s.get_name.unwrap()(self.screen))
+        }
     }
 
     pub fn device_node_mask(&self) -> Option<u32> {
@@ -275,7 +270,10 @@ impl PipeScreen {
     }
 
     pub fn device_vendor(&self) -> String {
-        unsafe { c_string_to_string((*self.screen).get_device_vendor.unwrap()(self.screen)) }
+        unsafe {
+            let s = *self.screen;
+            c_string_to_string(s.get_device_vendor.unwrap()(self.screen))
+        }
     }
 
     pub fn device_type(&self) -> pipe_loader_device_type {
@@ -294,7 +292,9 @@ impl PipeScreen {
 
     pub fn cl_cts_version(&self) -> &CStr {
         unsafe {
-            let ptr = (*self.screen)
+            let s = *self.screen;
+
+            let ptr = s
                 .get_cl_cts_version
                 .map_or(ptr::null(), |get_cl_cts_version| {
                     get_cl_cts_version(self.screen)
@@ -314,9 +314,8 @@ impl PipeScreen {
         target: pipe_texture_target,
         bindings: u32,
     ) -> bool {
-        unsafe {
-            (*self.screen).is_format_supported.unwrap()(self.screen, format, target, 0, 0, bindings)
-        }
+        let s = &mut unsafe { *self.screen };
+        unsafe { s.is_format_supported.unwrap()(self.screen, format, target, 0, 0, bindings) }
     }
 
     pub fn get_timestamp(&self) -> u64 {
@@ -343,7 +342,9 @@ impl PipeScreen {
     }
 
     pub fn shader_cache(&self) -> Option<DiskCacheBorrowed> {
-        let ptr = if let Some(func) = unsafe { *self.screen }.get_disk_shader_cache {
+        let s = &mut unsafe { *self.screen };
+
+        let ptr = if let Some(func) = s.get_disk_shader_cache {
             unsafe { func(self.screen) }
         } else {
             ptr::null_mut()
@@ -353,7 +354,8 @@ impl PipeScreen {
     }
 
     pub fn finalize_nir(&self, nir: &NirShader) {
-        if let Some(func) = unsafe { *self.screen }.finalize_nir {
+        let s = &mut unsafe { *self.screen };
+        if let Some(func) = s.finalize_nir {
             unsafe {
                 func(self.screen, nir.get_nir().cast());
             }
@@ -362,18 +364,15 @@ impl PipeScreen {
 
     pub(super) fn unref_fence(&self, mut fence: *mut pipe_fence_handle) {
         unsafe {
-            (*self.screen).fence_reference.unwrap()(self.screen, &mut fence, ptr::null_mut());
+            let s = &mut *self.screen;
+            s.fence_reference.unwrap()(s, &mut fence, ptr::null_mut());
         }
     }
 
     pub(super) fn fence_finish(&self, fence: *mut pipe_fence_handle) {
         unsafe {
-            (*self.screen).fence_finish.unwrap()(
-                self.screen,
-                ptr::null_mut(),
-                fence,
-                OS_TIMEOUT_INFINITE as u64,
-            );
+            let s = &mut *self.screen;
+            s.fence_finish.unwrap()(s, ptr::null_mut(), fence, OS_TIMEOUT_INFINITE as u64);
         }
     }
 }

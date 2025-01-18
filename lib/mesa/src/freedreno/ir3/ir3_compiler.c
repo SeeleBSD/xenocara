@@ -109,6 +109,7 @@ static const nir_shader_compiler_options ir3_base_options = {
    .lower_unpack_unorm_2x16 = true,
    .lower_pack_split = true,
    .use_interpolated_input_intrinsics = true,
+   .lower_rotate = true,
    .lower_to_scalar = true,
    .has_imul24 = true,
    .has_fsub = true,
@@ -132,7 +133,7 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
 
    ir3_shader_debug = debug_get_option_ir3_shader_debug();
    ir3_shader_override_path =
-      __normal_user() ? debug_get_option_ir3_shader_override_path() : NULL;
+      !__check_suid() ? debug_get_option_ir3_shader_override_path() : NULL;
 
    if (ir3_shader_override_path) {
       ir3_shader_debug |= IR3_DBG_NOCACHE;
@@ -196,18 +197,11 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->has_dp2acc = dev_info->a6xx.has_dp2acc;
       compiler->has_dp4acc = dev_info->a6xx.has_dp4acc;
 
-      if (compiler->gen == 6 && options->shared_push_consts) {
-         compiler->shared_consts_base_offset = 504;
-         compiler->shared_consts_size = 8;
-         compiler->geom_shared_consts_size_quirk = 16;
-      } else {
-         compiler->shared_consts_base_offset = -1;
-         compiler->shared_consts_size = 0;
-         compiler->geom_shared_consts_size_quirk = 0;
-      }
+      compiler->shared_consts_base_offset = 504;
+      compiler->shared_consts_size = 8;
+      compiler->geom_shared_consts_size_quirk = 16;
 
       compiler->has_fs_tex_prefetch = dev_info->a6xx.has_fs_tex_prefetch;
-      compiler->stsc_duplication_quirk = dev_info->a7xx.stsc_duplication_quirk;
    } else {
       compiler->max_const_pipeline = 512;
       compiler->max_const_geom = 512;

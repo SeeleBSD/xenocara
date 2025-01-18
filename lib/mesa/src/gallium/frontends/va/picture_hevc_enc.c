@@ -167,12 +167,6 @@ vlVaHandleVAEncSequenceParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *con
          return VA_STATUS_ERROR_ALLOCATION_FAILED;
 
       getEncParamPresetH265(context);
-      context->desc.h265enc.rc.vbv_buffer_size = 20000000;
-      context->desc.h265enc.rc.vbv_buf_lv = 48;
-      context->desc.h265enc.rc.fill_data_enable = 1;
-      context->desc.h265enc.rc.enforce_hrd = 1;
-      context->desc.h265enc.rc.max_qp = 51;
-      context->desc.h265enc.rc.min_qp = 0;
    }
 
    context->desc.h265enc.seq.general_profile_idc = h265->general_profile_idc;
@@ -431,12 +425,6 @@ static void parseEncSpsParamsH265(vlVaContext *context, struct vl_rbsp *rbsp)
             context->desc.h265enc.seq.matrix_coefficients = vl_rbsp_u(rbsp, 8);
          }
       }
-
-      context->desc.h265enc.seq.vui_flags.chroma_loc_info_present_flag = vl_rbsp_u(rbsp, 1);
-      if (context->desc.h265enc.seq.vui_flags.chroma_loc_info_present_flag) {
-         context->desc.h265enc.seq.chroma_sample_loc_type_top_field = vl_rbsp_ue(rbsp);
-         context->desc.h265enc.seq.chroma_sample_loc_type_bottom_field = vl_rbsp_ue(rbsp);
-      }
    }
 }
 
@@ -465,7 +453,7 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
       vl_vlc_eatbits(&vlc, 3);
 
       struct vl_rbsp rbsp;
-      vl_rbsp_init(&rbsp, &vlc, ~0, context->packed_header_emulation_bytes);
+      vl_rbsp_init(&rbsp, &vlc, ~0);
 
       switch(nal_unit_type) {
       case HEVC_NAL_SPS:
@@ -476,9 +464,6 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
       default:
          break;
       }
-
-      if (!context->packed_header_emulation_bytes)
-         break;
    }
 
    return VA_STATUS_SUCCESS;
@@ -512,6 +497,13 @@ vlVaHandleVAEncMiscParameterTypeHRDHEVC(vlVaContext *context, VAEncMiscParameter
 void getEncParamPresetH265(vlVaContext *context)
 {
    //rate control
+   context->desc.h265enc.rc.vbv_buffer_size = 20000000;
+   context->desc.h265enc.rc.vbv_buf_lv = 48;
+   context->desc.h265enc.rc.fill_data_enable = 1;
+   context->desc.h265enc.rc.enforce_hrd = 1;
+   context->desc.h265enc.rc.max_qp = 51;
+   context->desc.h265enc.rc.min_qp = 0;
+
    if (context->desc.h265enc.rc.frame_rate_num == 0 ||
        context->desc.h265enc.rc.frame_rate_den == 0) {
       context->desc.h265enc.rc.frame_rate_num = 30;

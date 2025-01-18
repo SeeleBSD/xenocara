@@ -94,98 +94,65 @@ xe_gem_mmap(struct anv_device *device, struct anv_bo *bo, uint64_t offset,
 }
 
 static inline int
-xe_vm_bind_op(struct anv_device *device, int num_binds,
-              struct anv_vm_bind *binds)
+xe_gem_vm_bind_op(struct anv_device *device, struct anv_bo *bo, uint32_t op)
 {
-   int ret;
+   uint32_t syncobj_handle;
+   int ret = drmSyncobjCreate(device->fd, 0, &syncobj_handle);
 
+   if (ret)
+      return ret;
+
+   uint32_t obj = op == XE_VM_BIND_OP_UNMAP ? 0 : bo->gem_handle;
+   uint64_t obj_offset = 0;
+   if (bo->from_host_ptr) {
+      obj = 0;
+      obj_offset = (uintptr_t)bo->map;
+      if (op == XE_VM_BIND_OP_MAP)
+         op = XE_VM_BIND_OP_MAP_USERPTR;
+   }
+
+   struct drm_xe_sync sync = {
+      .flags = DRM_XE_SYNC_SYNCOBJ | DRM_XE_SYNC_SIGNAL,
+      .handle = syncobj_handle,
+   };
    struct drm_xe_vm_bind args = {
       .vm_id = device->vm_id,
-      .num_binds = num_binds,
-      .bind = {},
+      .num_binds = 1,
+      .bind.obj = obj,
+      .bind.obj_offset = obj_offset,
+      .bind.range = bo->actual_size,
+      .bind.addr = intel_48b_address(bo->offset),
+      .bind.op = op,
+      .num_syncs = 1,
+      .syncs = (uintptr_t)&sync,
    };
-
-   STACK_ARRAY(struct drm_xe_vm_bind_op, xe_binds_stackarray, num_binds);
-   struct drm_xe_vm_bind_op *xe_binds;
-   if (num_binds > 1) {
-      if (!xe_binds_stackarray)
-         return -ENOMEM;
-
-      xe_binds = xe_binds_stackarray;
-      args.vector_of_binds = (uintptr_t)xe_binds;
-   } else {
-      xe_binds = &args.bind;
-   }
-
-   for (int i = 0; i < num_binds; i++) {
-      struct anv_vm_bind *bind = &binds[i];
-      struct anv_bo *bo = bind->bo;
-
-      struct drm_xe_vm_bind_op *xe_bind = &xe_binds[i];
-      *xe_bind = (struct drm_xe_vm_bind_op) {
-         .obj = 0,
-         .obj_offset = bind->bo_offset,
-         .range = bind->size,
-         .addr = intel_48b_address(bind->address),
-         .tile_mask = 0,
-         .op = XE_VM_BIND_OP_UNMAP,
-         .flags = 0,
-         .region = 0,
-      };
-
-      if (bind->op == ANV_VM_BIND) {
-         if (!bo) {
-            xe_bind->op = XE_VM_BIND_OP_MAP;
-            xe_bind->flags |= XE_VM_BIND_FLAG_NULL;
-            assert(xe_bind->obj_offset == 0);
-         } else if (bo->from_host_ptr) {
-            xe_bind->op = XE_VM_BIND_OP_MAP_USERPTR;
-         } else {
-            xe_bind->op = XE_VM_BIND_OP_MAP;
-            xe_bind->obj = bo->gem_handle;
-         }
-      }
-
-      /* userptr and bo_offset are an union! */
-      if (bo && bo->from_host_ptr)
-         xe_bind->userptr = (uintptr_t)bo->map;
-   }
-
    ret = intel_ioctl(device->fd, DRM_IOCTL_XE_VM_BIND, &args);
-   STACK_ARRAY_FINISH(xe_binds_stackarray);
+   if (ret)
+      goto bind_error;
 
+   struct drm_syncobj_wait wait = {
+      .handles = (uintptr_t)&syncobj_handle,
+      .timeout_nsec = INT64_MAX,
+      .count_handles = 1,
+      .flags = 0,
+      .first_signaled = 0,
+      .pad = 0,
+   };
+   intel_ioctl(device->fd, DRM_IOCTL_SYNCOBJ_WAIT, &wait);
+
+bind_error:
+   drmSyncobjDestroy(device->fd, syncobj_handle);
    return ret;
 }
 
-static int
-xe_vm_bind(struct anv_device *device, int num_binds,
-           struct anv_vm_bind *binds)
+static int xe_gem_vm_bind(struct anv_device *device, struct anv_bo *bo)
 {
-   return xe_vm_bind_op(device, num_binds, binds);
+   return xe_gem_vm_bind_op(device, bo, XE_VM_BIND_OP_MAP);
 }
 
-static int xe_vm_bind_bo(struct anv_device *device, struct anv_bo *bo)
+static int xe_gem_vm_unbind(struct anv_device *device, struct anv_bo *bo)
 {
-   struct anv_vm_bind bind = {
-      .bo = bo,
-      .address = bo->offset,
-      .bo_offset = 0,
-      .size = bo->actual_size,
-      .op = ANV_VM_BIND,
-   };
-   return xe_vm_bind_op(device, 1, &bind);
-}
-
-static int xe_vm_unbind_bo(struct anv_device *device, struct anv_bo *bo)
-{
-   struct anv_vm_bind bind = {
-      .bo = bo,
-      .address = bo->offset,
-      .bo_offset = 0,
-      .size = bo->actual_size,
-      .op = ANV_VM_UNBIND,
-   };
-   return xe_vm_bind_op(device, 1, &bind);
+   return xe_gem_vm_bind_op(device, bo, XE_VM_BIND_OP_UNMAP);
 }
 
 static uint32_t
@@ -198,13 +165,6 @@ xe_gem_create_userptr(struct anv_device *device, void *mem, uint64_t size)
    return device->workaround_bo->gem_handle;
 }
 
-static uint32_t
-xe_bo_alloc_flags_to_bo_flags(struct anv_device *device,
-                              enum anv_bo_alloc_flags alloc_flags)
-{
-   return 0;
-}
-
 const struct anv_kmd_backend *
 anv_xe_kmd_backend_get(void)
 {
@@ -213,13 +173,11 @@ anv_xe_kmd_backend_get(void)
       .gem_create_userptr = xe_gem_create_userptr,
       .gem_close = xe_gem_close,
       .gem_mmap = xe_gem_mmap,
-      .vm_bind = xe_vm_bind,
-      .vm_bind_bo = xe_vm_bind_bo,
-      .vm_unbind_bo = xe_vm_unbind_bo,
+      .gem_vm_bind = xe_gem_vm_bind,
+      .gem_vm_unbind = xe_gem_vm_unbind,
       .execute_simple_batch = xe_execute_simple_batch,
       .queue_exec_locked = xe_queue_exec_locked,
       .queue_exec_trace = xe_queue_exec_utrace_locked,
-      .bo_alloc_flags_to_bo_flags = xe_bo_alloc_flags_to_bo_flags,
    };
    return &xe_backend;
 }

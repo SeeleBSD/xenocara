@@ -134,7 +134,6 @@ struct etna_cmd_stream_priv {
 	struct etna_pipe *pipe;
 
 	uint32_t last_timestamp;
-	uint32_t offset_end_of_context_init;
 
 	/* submit ioctl related tables: */
 	struct {

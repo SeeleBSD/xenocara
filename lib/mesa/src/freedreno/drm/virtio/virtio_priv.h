@@ -86,8 +86,9 @@ struct virtio_device {
 FD_DEFINE_CAST(fd_device, virtio_device);
 
 #define virtio_ioctl(fd, name, args) ({                              \
-      MESA_TRACE_SCOPE(#name);                                       \
+      MESA_TRACE_BEGIN(#name);                                       \
       int ret = drmIoctl((fd), DRM_IOCTL_ ## name, (args));          \
+      MESA_TRACE_END();                                              \
       ret;                                                           \
    })
 

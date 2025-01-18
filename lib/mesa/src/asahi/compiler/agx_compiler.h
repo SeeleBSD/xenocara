@@ -275,12 +275,6 @@ typedef struct {
    uint8_t nr_dests;
    uint8_t nr_srcs;
 
-   /* TODO: More efficient */
-   union {
-      enum agx_icond icond;
-      enum agx_fcond fcond;
-   };
-
    union {
       uint64_t imm;
       uint32_t writeout;
@@ -291,6 +285,8 @@ typedef struct {
       uint16_t pixel_offset;
       uint16_t zs;
       enum agx_sr sr;
+      enum agx_icond icond;
+      enum agx_fcond fcond;
       enum agx_round round;
       enum agx_atomic_opc atomic_opc;
       enum agx_lod_mode lod_mode;
@@ -299,9 +295,6 @@ typedef struct {
 
    /* For local access */
    enum agx_format format;
-
-   /* Number of nested control flow layers to jump by. TODO: Optimize */
-   uint32_t nest;
 
    /* Invert icond/fcond */
    bool invert_cond : 1;
@@ -324,6 +317,9 @@ typedef struct {
    /* Scoreboard index, 0 or 1. Leave as 0 for instructions that do not require
     * scoreboarding (everything but memory load/store and texturing). */
    unsigned scoreboard : 1;
+
+   /* Number of nested control flow layers to jump by */
+   unsigned nest : 2;
 
    /* Output modifiers */
    bool saturate : 1;
@@ -373,7 +369,7 @@ typedef struct agx_block {
    bool loop_header;
 
    /* Offset of the block in the emitted binary */
-   off_t offset, last_offset;
+   off_t offset;
 
    /** Available for passes to use for metadata */
    uint8_t pass_flags;
@@ -404,12 +400,6 @@ typedef struct {
     * NIR is just loop and if-else, this is the number of nested if-else
     * statements in the loop */
    unsigned loop_nesting;
-
-   /* Total nesting across all loops, to determine if we need push_exec */
-   unsigned total_nesting;
-
-   /* Whether loop being emitted used any `continue` jumps */
-   bool loop_continues;
 
    /* During instruction selection, for inserting control flow */
    agx_block *current_block;
@@ -602,34 +592,10 @@ agx_predecessor_index(agx_block *succ, agx_block *pred)
    unreachable("Invalid predecessor");
 }
 
-static inline agx_block *
-agx_prev_block(agx_block *ins)
-{
-   return list_last_entry(&(ins->link), agx_block, link);
-}
-
 static inline agx_instr *
 agx_prev_op(agx_instr *ins)
 {
    return list_last_entry(&(ins->link), agx_instr, link);
-}
-
-static inline agx_instr *
-agx_first_instr(agx_block *block)
-{
-   if (list_is_empty(&block->instructions))
-      return NULL;
-   else
-      return list_first_entry(&block->instructions, agx_instr, link);
-}
-
-static inline agx_instr *
-agx_last_instr(agx_block *block)
-{
-   if (list_is_empty(&block->instructions))
-      return NULL;
-   else
-      return list_last_entry(&block->instructions, agx_instr, link);
 }
 
 static inline agx_instr *
@@ -704,6 +670,24 @@ agx_after_instr(agx_instr *instr)
    };
 }
 
+/*
+ * Get a cursor inserting at the logical end of the block. In particular, this
+ * is before branches or control flow instructions, which occur after the
+ * logical end but before the physical end.
+ */
+static inline agx_cursor
+agx_after_block_logical(agx_block *block)
+{
+   /* Search for a p_logical_end */
+   agx_foreach_instr_in_block_rev(block, I) {
+      if (I->op == AGX_OPCODE_LOGICAL_END)
+         return agx_before_instr(I);
+   }
+
+   /* If there's no p_logical_end, use the physical end */
+   return agx_after_block(block);
+}
+
 static inline agx_cursor
 agx_before_nonempty_block(agx_block *block)
 {
@@ -720,43 +704,6 @@ agx_before_block(agx_block *block)
       return agx_after_block(block);
    else
       return agx_before_nonempty_block(block);
-}
-
-static inline bool
-instr_after_logical_end(const agx_instr *I)
-{
-   switch (I->op) {
-   case AGX_OPCODE_JMP_EXEC_ANY:
-   case AGX_OPCODE_JMP_EXEC_NONE:
-   case AGX_OPCODE_POP_EXEC:
-   case AGX_OPCODE_BREAK:
-   case AGX_OPCODE_IF_ICMP:
-   case AGX_OPCODE_WHILE_ICMP:
-   case AGX_OPCODE_IF_FCMP:
-   case AGX_OPCODE_WHILE_FCMP:
-   case AGX_OPCODE_STOP:
-      return true;
-   default:
-      return false;
-   }
-}
-
-/*
- * Get a cursor inserting at the logical end of the block. In particular, this
- * is before branches or control flow instructions, which occur after the
- * logical end but before the physical end.
- */
-static inline agx_cursor
-agx_after_block_logical(agx_block *block)
-{
-   /* Search for the first instruction that's not past the logical end */
-   agx_foreach_instr_in_block_rev(block, I) {
-      if (!instr_after_logical_end(I))
-         return agx_after_instr(I);
-   }
-
-   /* If we got here, the block is either empty or entirely control flow */
-   return agx_before_block(block);
 }
 
 /* IR builder in terms of cursor infrastructure */
@@ -817,8 +764,6 @@ void agx_ra(agx_context *ctx);
 void agx_lower_64bit_postra(agx_context *ctx);
 void agx_insert_waits(agx_context *ctx);
 void agx_opt_empty_else(agx_context *ctx);
-void agx_opt_break_if(agx_context *ctx);
-void agx_opt_jmp_none(agx_context *ctx);
 void agx_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 
 #ifndef NDEBUG

@@ -29,12 +29,7 @@ computerator_files = [
 
 computerator_cpp_args = cpp.get_supported_arguments([
   '-Wno-sign-compare',
-  '-Wno-array-bounds',
 ])
-
-if meson.is_cross_build()
-  computerator_cpp_args += '-Wno-array-bounds'
-endif
 
 computerator = executable(
   'computerator',

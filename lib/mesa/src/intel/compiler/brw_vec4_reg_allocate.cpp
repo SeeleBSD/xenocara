@@ -27,8 +27,6 @@
 
 using namespace brw;
 
-#define REG_CLASS_COUNT 20
-
 namespace brw {
 
 static void
@@ -102,10 +100,10 @@ brw_vec4_alloc_reg_set(struct brw_compiler *compiler)
     * SEND-from-GRF sources cannot be split, so we also need classes for each
     * potential message length.
     */
-   assert(REG_CLASS_COUNT == MAX_VGRF_SIZE(compiler->devinfo));
-   int class_sizes[REG_CLASS_COUNT];
+   const int class_count = MAX_VGRF_SIZE;
+   int class_sizes[MAX_VGRF_SIZE];
 
-   for (int i = 0; i < REG_CLASS_COUNT; i++)
+   for (int i = 0; i < class_count; i++)
       class_sizes[i] = i + 1;
 
 
@@ -114,12 +112,12 @@ brw_vec4_alloc_reg_set(struct brw_compiler *compiler)
    if (compiler->devinfo->ver >= 6)
       ra_set_allocate_round_robin(compiler->vec4_reg_set.regs);
    ralloc_free(compiler->vec4_reg_set.classes);
-   compiler->vec4_reg_set.classes = ralloc_array(compiler, struct ra_class *, REG_CLASS_COUNT);
+   compiler->vec4_reg_set.classes = ralloc_array(compiler, struct ra_class *, class_count);
 
    /* Now, add the registers to their classes, and add the conflicts
     * between them and the base GRF registers (and also each other).
     */
-   for (int i = 0; i < REG_CLASS_COUNT; i++) {
+   for (int i = 0; i < class_count; i++) {
       int class_reg_count = base_reg_count - (class_sizes[i] - 1);
       compiler->vec4_reg_set.classes[i] =
          ra_alloc_contig_reg_class(compiler->vec4_reg_set.regs, class_sizes[i]);
@@ -178,7 +176,7 @@ vec4_visitor::reg_allocate()
 
    for (unsigned i = 0; i < alloc.count; i++) {
       int size = this->alloc.sizes[i];
-      assert(size >= 1 && size <= MAX_VGRF_SIZE(devinfo));
+      assert(size >= 1 && size <= MAX_VGRF_SIZE);
       ra_set_node_class(g, i, compiler->vec4_reg_set.classes[size - 1]);
 
       for (unsigned j = 0; j < i; j++) {

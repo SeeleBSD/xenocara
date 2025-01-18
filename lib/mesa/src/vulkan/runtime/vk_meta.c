@@ -398,7 +398,6 @@ create_rect_list_pipeline(struct vk_device *device,
                                                    pipeline_out);
 
    STACK_ARRAY_FINISH(dyn_state);
-   STACK_ARRAY_FINISH(stages);
 
    return result;
 }

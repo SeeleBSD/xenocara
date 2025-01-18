@@ -75,13 +75,6 @@ radv_use_tc_compat_htile_for_image(struct radv_device *device, const VkImageCrea
    if (device->physical_device->rad_info.gfx_level < GFX8)
       return false;
 
-   /* TC-compat HTILE looks broken on Tonga (and Iceland is the same design) and the documented bug
-    * workarounds don't help.
-    */
-   if (device->physical_device->rad_info.family == CHIP_TONGA ||
-       device->physical_device->rad_info.family == CHIP_ICELAND)
-      return false;
-
    if (pCreateInfo->tiling == VK_IMAGE_TILING_LINEAR)
       return false;
 
@@ -280,9 +273,12 @@ radv_use_dcc_for_image_early(struct radv_device *device, struct radv_image *imag
          return false;
    }
 
-   /* DCC MSAA can't work on GFX10.3 and earlier without FMASK. */
-   if (pCreateInfo->samples > 1 && device->physical_device->rad_info.gfx_level < GFX11 &&
-       (device->instance->debug_flags & RADV_DEBUG_NO_FMASK))
+   /* FIXME: Figure out how to use DCC for MSAA images without FMASK. */
+   if (pCreateInfo->samples > 1 && !device->physical_device->use_fmask)
+      return false;
+
+   /* FIXME: DCC with mipmaps is broken on GFX11. */
+   if (device->physical_device->rad_info.gfx_level == GFX11 && pCreateInfo->mipLevels > 1)
       return false;
 
    return radv_are_formats_dcc_compatible(device->physical_device, pCreateInfo->pNext, format, pCreateInfo->flags,
@@ -530,7 +526,7 @@ radv_patch_image_from_extra_info(struct radv_device *device, struct radv_image *
          image_info->surf_index = NULL;
       }
 
-      if (create_info->prime_blit_src && !device->physical_device->rad_info.sdma_supports_compression) {
+      if (create_info->prime_blit_src && device->physical_device->rad_info.gfx_level == GFX9) {
          /* Older SDMA hw can't handle DCC */
          image->planes[plane].surface.flags |= RADEON_SURF_DISABLE_DCC;
       }
@@ -539,17 +535,38 @@ radv_patch_image_from_extra_info(struct radv_device *device, struct radv_image *
 }
 
 static VkFormat
+etc2_emulation_format(VkFormat format)
+{
+   switch (format) {
+   case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
+   case VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:
+   case VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:
+      return VK_FORMAT_R8G8B8A8_UNORM;
+   case VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK:
+   case VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK:
+   case VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK:
+      return VK_FORMAT_R8G8B8A8_SRGB;
+   case VK_FORMAT_EAC_R11_UNORM_BLOCK:
+      return VK_FORMAT_R16_UNORM;
+   case VK_FORMAT_EAC_R11_SNORM_BLOCK:
+      return VK_FORMAT_R16_SNORM;
+   case VK_FORMAT_EAC_R11G11_UNORM_BLOCK:
+      return VK_FORMAT_R16G16_UNORM;
+   case VK_FORMAT_EAC_R11G11_SNORM_BLOCK:
+      return VK_FORMAT_R16G16_SNORM;
+   default:
+      unreachable("Unhandled ETC format");
+   }
+}
+
+static VkFormat
 radv_image_get_plane_format(const struct radv_physical_device *pdev, const struct radv_image *image, unsigned plane)
 {
-   if (radv_is_format_emulated(pdev, image->vk.format)) {
+   if (pdev->emulate_etc2 && vk_format_description(image->vk.format)->layout == UTIL_FORMAT_LAYOUT_ETC) {
       if (plane == 0)
          return image->vk.format;
-      if (vk_format_description(image->vk.format)->layout == UTIL_FORMAT_LAYOUT_ASTC)
-         return vk_texcompress_astc_emulation_format(image->vk.format);
-      else
-         return vk_texcompress_etc2_emulation_format(image->vk.format);
+      return etc2_emulation_format(image->vk.format);
    }
-
    return vk_format_get_plane_format(image->vk.format, plane);
 }
 
@@ -973,7 +990,7 @@ gfx9_border_color_swizzle(const struct util_format_description *desc)
 }
 
 bool
-vi_alpha_is_on_msb(const struct radv_device *device, const VkFormat format)
+vi_alpha_is_on_msb(struct radv_device *device, VkFormat format)
 {
    if (device->physical_device->rad_info.gfx_level >= GFX11)
       return false;
@@ -1621,7 +1638,7 @@ radv_image_use_comp_to_single(const struct radv_device *device, const struct rad
 static unsigned
 radv_get_internal_plane_count(const struct radv_physical_device *pdev, VkFormat fmt)
 {
-   if (radv_is_format_emulated(pdev, fmt))
+   if (pdev->emulate_etc2 && vk_format_description(fmt)->layout == UTIL_FORMAT_LAYOUT_ETC)
       return 2;
    return vk_format_get_plane_count(fmt);
 }
@@ -1710,14 +1727,9 @@ radv_image_create_layout(struct radv_device *device, struct radv_image_create_in
    if (image->vk.usage & (VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR)) {
       assert(profile_list);
       uint32_t width_align, height_align;
-      radv_video_get_profile_alignments(device->physical_device, profile_list, &width_align, &height_align);
+      vk_video_get_profile_alignments(profile_list, &width_align, &height_align);
       image_info.width = align(image_info.width, width_align);
       image_info.height = align(image_info.height, height_align);
-
-      if (radv_has_uvd(device->physical_device) && image->vk.usage & VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR) {
-         /* UVD and kernel demand a full DPB allocation. */
-         image_info.array_size = MIN2(16, image_info.array_size);
-      }
    }
 
    unsigned plane_count = radv_get_internal_plane_count(device->physical_device, image->vk.format);
@@ -2183,12 +2195,15 @@ radv_image_view_init(struct radv_image_view *iview, struct radv_device *device,
       plane_count = vk_format_get_plane_count(iview->vk.format);
    }
 
-   /* when the view format is emulated, redirect the view to the hidden plane 1 */
-   if (radv_is_format_emulated(device->physical_device, iview->vk.format)) {
-      assert(radv_is_format_emulated(device->physical_device, image->vk.format));
-      iview->plane_id = 1;
-      iview->vk.view_format = image->planes[iview->plane_id].format;
-      iview->vk.format = image->planes[iview->plane_id].format;
+   if (device->physical_device->emulate_etc2 &&
+       vk_format_description(image->vk.format)->layout == UTIL_FORMAT_LAYOUT_ETC) {
+      const struct util_format_description *desc = vk_format_description(iview->vk.format);
+      if (desc->layout == UTIL_FORMAT_LAYOUT_ETC) {
+         iview->plane_id = 1;
+         iview->vk.view_format = etc2_emulation_format(iview->vk.format);
+         iview->vk.format = etc2_emulation_format(iview->vk.format);
+      }
+
       plane_count = 1;
    }
 
@@ -2237,8 +2252,7 @@ radv_image_view_init(struct radv_image_view *iview, struct radv_device *device,
        * block compatible format and the compressed format, so even if we take
        * the plain converted dimensions the physical layout is correct.
        */
-      if (device->physical_device->rad_info.gfx_level >= GFX9 &&
-          vk_format_is_block_compressed(image->planes[iview->plane_id].format) &&
+      if (device->physical_device->rad_info.gfx_level >= GFX9 && vk_format_is_block_compressed(image->vk.format) &&
           !vk_format_is_block_compressed(iview->vk.format)) {
          /* If we have multiple levels in the view we should ideally take the last level,
           * but the mip calculation has a max(..., 1) so walking back to the base mip in an
@@ -2286,6 +2300,14 @@ radv_image_view_init(struct radv_image_view *iview, struct radv_device *device,
       radv_image_view_make_descriptor(iview, device, format, &pCreateInfo->components, min_lod, true,
                                       disable_compression, enable_compression, iview->plane_id + i, i, img_create_flags,
                                       &iview->nbc_view, sliced_3d);
+   }
+
+   if (iview->vk.aspects & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+      radv_initialise_ds_surface(device, &iview->ds, iview);
+   } else {
+      bool blendable = false;
+      if (radv_is_colorbuffer_format_supported(device->physical_device, iview->vk.format, &blendable))
+         radv_initialise_color_surface(device, &iview->cb, iview);
    }
 }
 

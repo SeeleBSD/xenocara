@@ -135,8 +135,6 @@ struct wsi_device {
    /* Create headless swapchains. */
    bool force_headless_swapchain;
 
-   bool force_swapchain_to_currentExtent;
-
    struct {
       /* Override the minimum number of images on the swapchain.
        * 0 = no override */

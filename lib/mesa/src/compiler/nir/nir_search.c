@@ -492,7 +492,7 @@ construct_value(nir_builder *build,
       assert(state->variables_seen & (1 << var->variable));
 
       nir_alu_src val = { NIR_SRC_INIT };
-      nir_alu_src_copy(&val, &state->variables[var->variable]);
+      nir_alu_src_copy(&val, &state->variables[var->variable], NULL);
       assert(!var->is_constant);
 
       for (unsigned i = 0; i < NIR_MAX_VEC_COMPONENTS; i++)
@@ -622,8 +622,8 @@ add_uses_to_worklist(nir_instr *instr,
    nir_def *def = nir_instr_def(instr);
 
    nir_foreach_use_safe(use_src, def) {
-      if (nir_algebraic_automaton(nir_src_parent_instr(use_src), states, pass_op_table))
-         nir_instr_worklist_push_tail(worklist, nir_src_parent_instr(use_src));
+      if (nir_algebraic_automaton(use_src->parent_instr, states, pass_op_table))
+         nir_instr_worklist_push_tail(worklist, use_src->parent_instr);
    }
 }
 

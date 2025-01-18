@@ -24,7 +24,8 @@ struct vn_present_src_attachment {
 };
 
 struct vn_subpass {
-   VkImageAspectFlags attachment_aspects;
+   bool has_color_attachment;
+   bool has_depth_stencil_attachment;
    uint32_t view_mask;
 };
 

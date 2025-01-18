@@ -951,10 +951,8 @@ _mesa_End(void)
       }
 
       /* Special handling for GL_LINE_LOOP */
-      bool driver_supports_lineloop =
-         ctx->Const.DriverSupportedPrimMask & BITFIELD_BIT(MESA_PRIM_LINE_LOOP);
       if (exec->vtx.mode[last] == GL_LINE_LOOP &&
-          (exec->vtx.markers[last].begin == 0 || !driver_supports_lineloop)) {
+          exec->vtx.markers[last].begin == 0) {
          /* We're finishing drawing a line loop.  Append 0th vertex onto
           * end of vertex buffer so we can draw it as a line strip.
           */
@@ -966,9 +964,7 @@ _mesa_End(void)
          /* copy 0th vertex to end of buffer */
          memcpy(dst, src, exec->vtx.vertex_size * sizeof(fi_type));
 
-         if (exec->vtx.markers[last].begin == 0)
-            last_draw->start++; /* skip vertex0 */
-
+         last_draw->start++;  /* skip vertex0 */
          /* note that the count stays unchanged */
          exec->vtx.mode[last] = GL_LINE_STRIP;
 
@@ -977,9 +973,6 @@ _mesa_End(void)
           */
          exec->vtx.vert_count++;
          exec->vtx.buffer_ptr += exec->vtx.vertex_size;
-
-         if (!driver_supports_lineloop)
-            last_draw->count++;
       }
 
       try_vbo_merge(exec);

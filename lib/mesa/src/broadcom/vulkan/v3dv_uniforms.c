@@ -498,6 +498,7 @@ v3dv_write_uniforms_wg_offsets(struct v3dv_cmd_buffer *cmd_buffer,
    struct v3dv_cl_reloc uniform_stream = v3dv_cl_get_address(&job->indirect);
 
    struct v3dv_cl_out *uniforms = cl_start(&job->indirect);
+
    for (int i = 0; i < uinfo->count; i++) {
       uint32_t data = uinfo->data[i];
 
@@ -519,17 +520,13 @@ v3dv_write_uniforms_wg_offsets(struct v3dv_cmd_buffer *cmd_buffer,
                               cmd_buffer, pipeline, variant->stage);
          break;
 
-      case QUNIFORM_VIEWPORT_X_SCALE: {
-         float clipper_xy_granularity = V3DV_X(cmd_buffer->device, CLIPPER_XY_GRANULARITY);
-         cl_aligned_f(&uniforms, dynamic->viewport.scale[0][0] * clipper_xy_granularity);
+      case QUNIFORM_VIEWPORT_X_SCALE:
+         cl_aligned_f(&uniforms, dynamic->viewport.scale[0][0] * 256.0f);
          break;
-      }
 
-      case QUNIFORM_VIEWPORT_Y_SCALE: {
-         float clipper_xy_granularity = V3DV_X(cmd_buffer->device, CLIPPER_XY_GRANULARITY);
-         cl_aligned_f(&uniforms, dynamic->viewport.scale[0][1] * clipper_xy_granularity);
+      case QUNIFORM_VIEWPORT_Y_SCALE:
+         cl_aligned_f(&uniforms, dynamic->viewport.scale[0][1] * 256.0f);
          break;
-      }
 
       case QUNIFORM_VIEWPORT_Z_OFFSET: {
          float translate_z;

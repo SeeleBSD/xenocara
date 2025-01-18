@@ -6,7 +6,6 @@
 
 #include "ac_gpu_info.h"
 #include "ac_perfcounter.h"
-#include "ac_spm.h"
 
 #include "util/u_memory.h"
 #include "util/macros.h"
@@ -33,7 +32,7 @@ static struct ac_pc_block_base cik_CB = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_CB,
+   .spm_block_select = 0x0,
 };
 
 /* cik_CPC */
@@ -59,7 +58,7 @@ static struct ac_pc_block_base cik_CPC = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_CPC,
+   .spm_block_select = 0x1,
 };
 
 /* cik_CPF */
@@ -85,7 +84,7 @@ static struct ac_pc_block_base cik_CPF = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_CPF,
+   .spm_block_select = 0x2,
 };
 
 /* cik_CPG */
@@ -111,7 +110,7 @@ static struct ac_pc_block_base cik_CPG = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_CPG,
+   .spm_block_select = 0x0,
 };
 
 /* cik_DB */
@@ -137,6 +136,7 @@ static struct ac_pc_block_base cik_DB = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 3,
+   .spm_block_select = 0x1,
 };
 
 /* cik_GDS */
@@ -160,7 +160,7 @@ static struct ac_pc_block_base cik_GDS = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_GDS,
+   .spm_block_select = 0x3,
 };
 
 /* cik_GRBM */
@@ -218,6 +218,7 @@ static struct ac_pc_block_base cik_IA = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
+   .spm_block_select = 0x6,
 };
 
 /* cik_PA_SC */
@@ -246,7 +247,7 @@ static struct ac_pc_block_base cik_PA_SC = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_SC,
+   .spm_block_select = 0x4,
 };
 
 /* cik_PA_SU */
@@ -273,6 +274,7 @@ static struct ac_pc_block_base cik_PA_SU = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 3,
+   .spm_block_select = 0x2,
 };
 
 /* cik_SPI */
@@ -302,7 +304,7 @@ static struct ac_pc_block_base cik_SPI = {
 
    .num_spm_counters = 4,
    .num_spm_wires = 8,
-   .spm_block_select = AC_SPM_SE_BLOCK_SPI,
+   .spm_block_select = 0x8,
 };
 
 /* cik_SQ */
@@ -335,6 +337,7 @@ static struct ac_pc_block_base cik_SQ = {
    .counter0_lo = R_034700_SQ_PERFCOUNTER0_LO,
 
    .num_spm_wires = 8,
+   .spm_block_select = 0x9,
 };
 
 /* cik_SX */
@@ -360,7 +363,7 @@ static struct ac_pc_block_base cik_SX = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
-   .spm_block_select = AC_SPM_SE_BLOCK_SX,
+   .spm_block_select = 0x3,
 };
 
 /* cik_TA */
@@ -383,7 +386,7 @@ static struct ac_pc_block_base cik_TA = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_TA,
+   .spm_block_select = 0x5,
 };
 
 /* cik_TD */
@@ -406,7 +409,7 @@ static struct ac_pc_block_base cik_TD = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_TD,
+   .spm_block_select = 0x6,
 };
 
 /* cik_TCA */
@@ -432,6 +435,7 @@ static struct ac_pc_block_base cik_TCA = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
+   .spm_block_select = 0x5,
 };
 
 /* cik_TCC */
@@ -457,6 +461,7 @@ static struct ac_pc_block_base cik_TCC = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
+   .spm_block_select = 0x4,
 };
 
 /* cik_TCP */
@@ -482,6 +487,7 @@ static struct ac_pc_block_base cik_TCP = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 3,
+   .spm_block_select = 0x7,
 };
 
 /* cik_VGT */
@@ -507,6 +513,7 @@ static struct ac_pc_block_base cik_VGT = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 3,
+   .spm_block_select = 0xa,
 };
 
 /* cik_WD */
@@ -560,7 +567,7 @@ static struct ac_pc_block_base gfx10_CHA = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_CHA,
+   .spm_block_select = 0xc,
 };
 
 /* gfx10_CHCG */
@@ -584,7 +591,7 @@ static struct ac_pc_block_base gfx10_CHCG = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_CHCG,
+   .spm_block_select = 0xe,
 };
 
 /* gfx10_CHC */
@@ -608,7 +615,7 @@ static struct ac_pc_block_base gfx10_CHC = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_CHC,
+   .spm_block_select = 0xd,
 };
 
 /* gfx10_DB */
@@ -624,7 +631,7 @@ static struct ac_pc_block_base gfx10_DB = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
-   .spm_block_select = AC_SPM_SE_BLOCK_DB,
+   .spm_block_select = 0x1,
 };
 
 /* gfx10_GCR */
@@ -646,7 +653,7 @@ static struct ac_pc_block_base gfx10_GCR = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_GCR,
+   .spm_block_select = 0x4,
 };
 
 /* gfx10_GE */
@@ -681,7 +688,7 @@ static struct ac_pc_block_base gfx10_GE = {
 
    .num_spm_counters = 4,
    .num_spm_wires = 8,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_GE,
+   .spm_block_select = 0x6,
 };
 
 /* gfx10_GL1A */
@@ -706,7 +713,7 @@ static struct ac_pc_block_base gfx10_GL1A = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_GL1A,
+   .spm_block_select = 0xa,
 };
 
 /* gfx10_GL1C */
@@ -731,7 +738,7 @@ static struct ac_pc_block_base gfx10_GL1C = {
 
    .num_spm_counters = 1,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_GL1C,
+   .spm_block_select = 0xc
 };
 
 /* gfx10_GL2A */
@@ -756,7 +763,7 @@ static struct ac_pc_block_base gfx10_GL2A = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_GL2A,
+   .spm_block_select = 0x7,
 };
 
 /* gfx10_GL2C */
@@ -781,7 +788,7 @@ static struct ac_pc_block_base gfx10_GL2C = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_GL2C,
+   .spm_block_select = 0x8,
 };
 
 /* gfx10_PA_PH */
@@ -813,7 +820,7 @@ static struct ac_pc_block_base gfx10_PA_PH = {
 
    .num_spm_counters = 4,
    .num_spm_wires = 8,
-   .spm_block_select = AC_SPM_GLOBAL_BLOCK_PH,
+   .spm_block_select = 0x5,
 };
 
 /* gfx10_PA_SU */
@@ -841,7 +848,7 @@ static struct ac_pc_block_base gfx10_PA_SU = {
 
    .num_spm_counters = 4,
    .num_spm_wires = 8,
-   .spm_block_select = AC_SPM_SE_BLOCK_PA,
+   .spm_block_select = 0x2,
 };
 
 /* gfx10_RLC */
@@ -882,7 +889,7 @@ static struct ac_pc_block_base gfx10_RMI = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 2,
-   .spm_block_select = AC_SPM_SE_BLOCK_RMI,
+   .spm_block_select = 0xb,
 };
 
 /* gfx10_SQ */
@@ -897,7 +904,7 @@ static struct ac_pc_block_base gfx10_SQ = {
    .counter0_lo = R_034700_SQ_PERFCOUNTER0_LO,
 
    .num_spm_wires = 16,
-   .spm_block_select = AC_SPM_SE_BLOCK_SQG,
+   .spm_block_select = 0x9,
 };
 
 /* gfx10_TCP */
@@ -913,7 +920,7 @@ static struct ac_pc_block_base gfx10_TCP = {
 
    .num_spm_counters = 2,
    .num_spm_wires = 4,
-   .spm_block_select = AC_SPM_SE_BLOCK_TCP,
+   .spm_block_select = 0x7,
 };
 
 /* gfx10_UTCL1 */
@@ -930,21 +937,6 @@ static struct ac_pc_block_base gfx10_UTCL1 = {
    .select0 = gfx10_UTCL1_select0,
    .counter0_lo = R_035470_UTCL1_PERFCOUNTER0_LO,
    .num_spm_counters = 0,
-};
-
-/* gfx11_SQ_WQP */
-static struct ac_pc_block_base gfx11_SQ_WGP = {
-   .gpu_block = SQ_WGP,
-   .name = "SQ_WGP",
-   .num_counters = 16,
-   .flags = AC_PC_BLOCK_SE | AC_PC_BLOCK_SHADER,
-
-   .select0 = cik_SQ_select0,
-   .counter0_lo = R_034700_SQ_PERFCOUNTER0_LO,
-
-   .num_spm_counters = 8,
-   .num_spm_wires = 8,
-   .spm_block_select = AC_SPM_SE_BLOCK_SQC,
 };
 
 /* Both the number of instances and selectors varies between chips of the same
@@ -994,7 +986,7 @@ static struct ac_pc_block_gfxdescr groups_gfx10[] = {
    {&cik_GDS, 123},
    {&gfx10_GE, 315},
    {&gfx10_GL1A, 36},
-   {&gfx10_GL1C, 64, 4},
+   {&gfx10_GL1C, 64},
    {&gfx10_GL2A, 91},
    {&gfx10_GL2C, 235},
    {&cik_GRBM, 47},
@@ -1011,39 +1003,6 @@ static struct ac_pc_block_gfxdescr groups_gfx10[] = {
    {&gfx10_TCP, 77},
    {&cik_TD, 61},
    {&gfx10_UTCL1, 15},
-};
-
-static struct ac_pc_block_gfxdescr groups_gfx11[] = {
-   {&cik_CB, 313},
-   {&gfx10_CHA, 39},
-   {&gfx10_CHCG, 43},
-   {&gfx10_CHC, 43},
-   {&cik_CPC, 55},
-   {&cik_CPF, 43},
-   {&cik_CPG, 91},
-   {&gfx10_DB, 370},
-   {&gfx10_GCR, 154},
-   {&cik_GDS, 147},
-   {&gfx10_GE, 39},
-   {&gfx10_GL1A, 23},
-   {&gfx10_GL1C, 83, 4},
-   {&gfx10_GL2A, 107},
-   {&gfx10_GL2C, 258},
-   {&cik_GRBM, 49},
-   {&cik_GRBMSE, 20},
-   {&gfx10_PA_PH, 1023},
-   {&cik_PA_SC, 664},
-   {&gfx10_PA_SU, 310},
-   {&gfx10_RLC, 6},
-   {&gfx10_RMI, 138},
-   {&cik_SPI, 283},
-   {&gfx10_SQ, 36},
-   {&cik_SX, 81},
-   {&cik_TA, 235},
-   {&gfx10_TCP, 77},
-   {&cik_TD, 196},
-   {&gfx10_UTCL1, 65},
-   {&gfx11_SQ_WGP, 511, 4},
 };
 
 struct ac_pc_block *ac_lookup_counter(const struct ac_perfcounters *pc,
@@ -1151,6 +1110,7 @@ bool ac_init_block_names(const struct radeon_info *info,
       }
    }
 
+   assert(block->b->selectors <= 1000);
    block->selector_name_stride = block->group_name_stride + 4;
    block->selector_names =
       MALLOC(block->num_groups * block->b->selectors * block->selector_name_stride);
@@ -1196,10 +1156,6 @@ bool ac_init_perfcounters(const struct radeon_info *info,
       blocks = groups_gfx10;
       num_blocks = ARRAY_SIZE(groups_gfx10);
       break;
-   case GFX11:
-      blocks = groups_gfx11;
-      num_blocks = ARRAY_SIZE(groups_gfx11);
-      break;
    case GFX6:
    default:
       return false; /* not implemented */
@@ -1231,19 +1187,6 @@ bool ac_init_perfcounters(const struct radeon_info *info,
                !strcmp(block->b->b->name, "TCP") ||
                !strcmp(block->b->b->name, "TD")) {
          block->num_instances = MAX2(1, info->max_good_cu_per_sa);
-      }
-
-      if (info->gfx_level >= GFX10) {
-         if (!strcmp(block->b->b->name, "TCP")) {
-            block->num_global_instances = MAX2(1, info->num_cu_per_sh) * info->num_se * info->max_sa_per_se;
-         } else if (!strcmp(block->b->b->name, "SQ")) {
-            block->num_global_instances = block->num_instances * info->num_se;
-         } else if (!strcmp(block->b->b->name, "GL1C") ||
-                    !strcmp(block->b->b->name, "SQ_WGP")) {
-            block->num_global_instances = block->num_instances * info->num_se * info->max_sa_per_se;
-         } else if (!strcmp(block->b->b->name, "GL2C")) {
-            block->num_instances = block->num_global_instances = info->num_tcc_blocks;
-         }
       }
 
       if (ac_pc_block_has_per_instance_groups(pc, block)) {

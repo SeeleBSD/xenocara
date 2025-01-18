@@ -766,13 +766,13 @@ ntt_try_store_in_tgsi_output_with_use(struct ntt_compile *c,
       return false;
    }
 
-   if (nir_src_is_if(src))
+   if (src->is_if)
       return false;
 
-   if (nir_src_parent_instr(src)->type != nir_instr_type_intrinsic)
+   if (src->parent_instr->type != nir_instr_type_intrinsic)
       return false;
 
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(src->parent_instr);
    if (intr->intrinsic != nir_intrinsic_store_output ||
        !nir_src_is_const(intr->src[1])) {
       return false;
@@ -800,7 +800,7 @@ ntt_try_store_reg_in_tgsi_output(struct ntt_compile *c, struct ureg_dst *dst,
    /* Look for a single use for try_store_in_tgsi_output */
    nir_src *use = NULL;
    nir_foreach_reg_load(src, reg_decl) {
-      nir_intrinsic_instr *load = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+      nir_intrinsic_instr *load = nir_instr_as_intrinsic(src->parent_instr);
       nir_foreach_use_including_if(load_use, &load->def) {
          /* We can only have one use */
          if (use != NULL)
@@ -2458,23 +2458,6 @@ ntt_emit_barrier(struct ntt_compile *c, nir_intrinsic_instr *intr)
       if (modes & nir_var_mem_global)
          membar |= TGSI_MEMBAR_SHADER_BUFFER;
 
-      /* Hack for virglrenderer: the GLSL specific memory barrier functions,
-       * memoryBarrier{Buffer,Image,Shared,AtomicCounter}(), are only
-       * available in compute shaders prior to GLSL 4.30.  In other stages,
-       * it needs to use the full memoryBarrier().  It may be possible to
-       * make them available via #extension directives in older versions,
-       * but it's confusingly underspecified, and Mesa/virglrenderer don't
-       * currently agree on how to do it.  So, just promote partial memory
-       * barriers back to full ones outside of compute shaders when asked.
-       */
-      if (membar && !compute &&
-          c->options->non_compute_membar_needs_all_modes) {
-         membar |= TGSI_MEMBAR_SHADER_BUFFER |
-                   TGSI_MEMBAR_ATOMIC_BUFFER |
-                   TGSI_MEMBAR_SHADER_IMAGE |
-                   TGSI_MEMBAR_SHARED;
-      }
-
       /* If we only need workgroup scope (not device-scope), we might be able to
        * optimize a bit.
        */
@@ -3689,15 +3672,13 @@ ntt_fix_nir_options(struct pipe_screen *screen, struct nir_shader *s,
        !options->lower_fdph ||
        !options->lower_flrp64 ||
        !options->lower_fmod ||
+       !options->lower_rotate ||
        !options->lower_uadd_carry ||
        !options->lower_usub_borrow ||
        !options->lower_uadd_sat ||
        !options->lower_usub_sat ||
        !options->lower_uniforms_to_ubo ||
        !options->lower_vector_cmp ||
-       options->has_rotate8 ||
-       options->has_rotate16 ||
-       options->has_rotate32 ||
        options->lower_fsqrt != lower_fsqrt ||
        options->force_indirect_unrolling != no_indirects_mask ||
        force_indirect_unrolling_sampler) {
@@ -3711,6 +3692,7 @@ ntt_fix_nir_options(struct pipe_screen *screen, struct nir_shader *s,
       new_options->lower_fdph = true;
       new_options->lower_flrp64 = true;
       new_options->lower_fmod = true;
+      new_options->lower_rotate = true;
       new_options->lower_uadd_carry = true;
       new_options->lower_usub_borrow = true;
       new_options->lower_uadd_sat = true;
@@ -3718,9 +3700,6 @@ ntt_fix_nir_options(struct pipe_screen *screen, struct nir_shader *s,
       new_options->lower_uniforms_to_ubo = true;
       new_options->lower_vector_cmp = true;
       new_options->lower_fsqrt = lower_fsqrt;
-      new_options->has_rotate8 = false;
-      new_options->has_rotate16 = false;
-      new_options->has_rotate32 = false;
       new_options->force_indirect_unrolling = no_indirects_mask;
       new_options->force_indirect_unrolling_sampler = force_indirect_unrolling_sampler;
 
@@ -3902,15 +3881,6 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
       NIR_PASS_V(s, nir_remove_dead_variables, nir_var_shader_in, NULL);
    }
 
-   /* Lower tesslevel indirect derefs for tessellation shader.
-    * tesslevels are now a compact array variable and nir expects a constant
-    * array index into the compact array variable.
-    */
-   if (s->info.stage == MESA_SHADER_TESS_CTRL ||
-       s->info.stage == MESA_SHADER_TESS_EVAL) {
-      NIR_PASS_V(s, nir_lower_indirect_derefs, 0 , UINT32_MAX);
-   }
-
    NIR_PASS_V(s, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
               type_size, (nir_lower_io_options)0);
 
@@ -4066,6 +4036,7 @@ static const nir_shader_compiler_options nir_to_tgsi_compiler_options = {
    .lower_fdph = true,
    .lower_flrp64 = true,
    .lower_fmod = true,
+   .lower_rotate = true,
    .lower_uniforms_to_ubo = true,
    .lower_uadd_carry = true,
    .lower_usub_borrow = true,

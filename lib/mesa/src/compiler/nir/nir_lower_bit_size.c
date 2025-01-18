@@ -41,7 +41,7 @@ convert_to_bit_size(nir_builder *bld, nir_def *src,
    if ((type & (nir_type_uint | nir_type_int)) && bit_size == 32 &&
        alu && (alu->op == nir_op_b2i8 || alu->op == nir_op_b2i16)) {
       nir_alu_instr *instr = nir_alu_instr_create(bld->shader, nir_op_b2i32);
-      nir_alu_src_copy(&instr->src[0], &alu->src[0]);
+      nir_alu_src_copy(&instr->src[0], &alu->src[0], instr);
       return nir_builder_alu_instr_finish_and_insert(bld, instr);
    }
 
@@ -203,7 +203,7 @@ lower_intrinsic_instr(nir_builder *b, nir_intrinsic_instr *intrin,
 
       if (intrin->intrinsic != nir_intrinsic_vote_feq &&
           intrin->intrinsic != nir_intrinsic_vote_ieq)
-         res = nir_convert_to_bit_size(b, res, type, old_bit_size);
+         res = nir_u2uN(b, res, old_bit_size);
 
       nir_def_rewrite_uses(&intrin->def, res);
       break;

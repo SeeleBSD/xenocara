@@ -34,7 +34,7 @@
 extern "C" {
 #endif
 
-static inline GLenum glsl_get_gl_type(const struct glsl_type *t) { return t->gl_type; }
+GLenum glsl_get_gl_type(const struct glsl_type *type);
 
 #ifdef __cplusplus
 }

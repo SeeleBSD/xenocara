@@ -77,7 +77,6 @@
 #define PRESET_MODE_SPEED   (0)
 #define PRESET_MODE_BALANCE (1)
 #define PRESET_MODE_QUALITY (2)
-#define PRESET_MODE_HIGH_QUALITY (3)
 
 #define PREENCODING_MODE_DISABLE (0)
 #define PREENCODING_MODE_DEFAULT (1)
@@ -316,7 +315,6 @@ typedef struct {
    struct {
       struct pipe_resource *resource;
       struct pipe_transfer *transfer;
-      enum pipe_video_entrypoint entrypoint;
    } derived_surface;
    unsigned int export_refcount;
    VABufferInfo export_state;
@@ -374,8 +372,6 @@ typedef struct {
    bool needs_begin_frame;
    void *blit_cs;
    int packed_header_type;
-   bool packed_header_emulation_bytes;
-   struct set *surfaces;
 } vlVaContext;
 
 typedef struct {
@@ -388,7 +384,7 @@ typedef struct {
 typedef struct {
    struct pipe_video_buffer templat, *buffer, *deint_buffer;
    struct util_dynarray subpics; /* vlVaSubpicture */
-   vlVaContext *ctx;
+   VAContextID ctx;
    vlVaBuffer *coded_buf;
    void *feedback;
    unsigned int frame_num_cnt;
@@ -505,7 +501,6 @@ VAStatus vlVaQueryVideoProcFilterCaps(VADriverContextP ctx, VAContextID context,
 VAStatus vlVaQueryVideoProcPipelineCaps(VADriverContextP ctx, VAContextID context, VABufferID *filters,
                                         unsigned int num_filters, VAProcPipelineCaps *pipeline_cap);
 VAStatus vlVaSyncBuffer(VADriverContextP ctx, VABufferID buf_id, uint64_t timeout_ns);
-VAStatus vlVaMapBuffer2(VADriverContextP ctx, VABufferID buf_id, void **pbuf, uint32_t flags);
 
 // internal functions
 VAStatus vlVaHandleVAProcPipelineParameterBufferType(vlVaDriver *drv, vlVaContext *context, vlVaBuffer *buf);

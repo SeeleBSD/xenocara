@@ -4,7 +4,6 @@ import xml.parsers.expat
 import sys
 import os
 import collections
-import argparse
 
 class Error(Exception):
 	def __init__(self, message):
@@ -308,10 +307,6 @@ class Reg(object):
 	def dump_regpair_builder(self):
 		if self.bitset.inline:
 			self.bitset.dump_regpair_builder(self)
-
-	def dump_py(self):
-		print("\tREG_%s = 0x%08x" % (self.full_name, self.offset))
-
 
 class Parser(object):
 	def __init__(self):
@@ -634,17 +629,6 @@ class Parser(object):
 
 		self.dump_reg_usages()
 
-
-	def dump_regs_py(self):
-		regs = []
-		for e in self.file:
-			if isinstance(e, Reg):
-				regs.append(e)
-
-		for e in regs:
-			e.dump_py()
-
-
 	def dump_reg_variants(self, regname, variants):
 		# Don't bother for things that only have a single variant:
 		if len(variants) == 1:
@@ -721,14 +705,16 @@ class Parser(object):
 			self.dump_reg_variants(regname, self.variant_regs[regname])
 
 
-def dump_c(rnn_path, xml_path, guard, func):
+def main():
 	p = Parser()
-
-	try:
-		p.parse(rnn_path, xml_path)
-	except Error as e:
-		print(e, file=sys.stderr)
-		exit(1)
+	rnn_path = sys.argv[1]
+	xml_file = sys.argv[2]
+	if len(sys.argv) > 3 and sys.argv[3] == '--pack-structs':
+		do_structs = True
+		guard = str.replace(os.path.basename(xml_file), '.', '_').upper() + '_STRUCTS'
+	else:
+		do_structs = False
+		guard = str.replace(os.path.basename(xml_file), '.', '_').upper()
 
 	print("#ifndef %s\n#define %s\n" % (guard, guard))
 
@@ -742,59 +728,18 @@ def dump_c(rnn_path, xml_path, guard, func):
 	print("#define __struct_cast(X) (struct X)")
 	print("#endif")
 
-	func(p)
-
-	print("\n#endif /* %s */" % guard)
-
-
-def dump_c_defines(args):
-	guard = str.replace(os.path.basename(args.xml), '.', '_').upper()
-	dump_c(args.rnn, args.xml, guard, lambda p: p.dump())
-
-
-def dump_c_pack_structs(args):
-	guard = str.replace(os.path.basename(args.xml), '.', '_').upper() + '_STRUCTS'
-	dump_c(args.rnn, args.xml, guard, lambda p: p.dump_structs())
-
-
-def dump_py_defines(args):
-	p = Parser()
-
 	try:
-		p.parse(args.rnn, args.xml)
+		p.parse(rnn_path, xml_file)
 	except Error as e:
 		print(e, file=sys.stderr)
 		exit(1)
 
-	file_name = os.path.splitext(os.path.basename(args.xml))[0]
+	if do_structs:
+		p.dump_structs()
+	else:
+		p.dump()
 
-	print("from enum import IntEnum")
-	print("class %sRegs(IntEnum):" % file_name.upper())
-
-	os.path.basename(args.xml)
-
-	p.dump_regs_py()
-
-
-def main():
-	parser = argparse.ArgumentParser()
-	parser.add_argument('--rnn', type=str, required=True)
-	parser.add_argument('--xml', type=str, required=True)
-
-	subparsers = parser.add_subparsers(required=True)
-
-	parser_c_defines = subparsers.add_parser('c-defines')
-	parser_c_defines.set_defaults(func=dump_c_defines)
-
-	parser_c_pack_structs = subparsers.add_parser('c-pack-structs')
-	parser_c_pack_structs.set_defaults(func=dump_c_pack_structs)
-
-	parser_py_defines = subparsers.add_parser('py-defines')
-	parser_py_defines.set_defaults(func=dump_py_defines)
-
-	args = parser.parse_args()
-	args.func(args)
-
+	print("\n#endif /* %s */" % guard)
 
 if __name__ == '__main__':
 	main()

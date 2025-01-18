@@ -30,18 +30,6 @@
 #include "drm-uapi/i915_drm.h"
 #include "intel/common/i915/intel_gem.h"
 
-static int
-i915_gem_set_caching(struct anv_device *device,
-                     uint32_t gem_handle, uint32_t caching)
-{
-   struct drm_i915_gem_caching gem_caching = {
-      .handle = gem_handle,
-      .caching = caching,
-   };
-
-   return intel_ioctl(device->fd, DRM_IOCTL_I915_GEM_SET_CACHING, &gem_caching);
-}
-
 static uint32_t
 i915_gem_create(struct anv_device *device,
                 const struct intel_memory_class_instance **regions,
@@ -58,23 +46,6 @@ i915_gem_create(struct anv_device *device,
       };
       if (intel_ioctl(device->fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create))
          return 0;
-
-      if (alloc_flags & ANV_BO_ALLOC_SNOOPED) {
-         /* We don't want to change these defaults if it's going to be shared
-          * with another process.
-          */
-         assert(!(alloc_flags & ANV_BO_ALLOC_EXTERNAL));
-
-         /* Regular objects are created I915_CACHING_CACHED on LLC platforms and
-          * I915_CACHING_NONE on non-LLC platforms.  For many internal state
-          * objects, we'd rather take the snooping overhead than risk forgetting
-          * a CLFLUSH somewhere.  Userptr objects are always created as
-          * I915_CACHING_CACHED, which on non-LLC means snooped so there's no
-          * need to do this there.
-          */
-         if (device->info->has_caching_uapi && !device->info->has_llc)
-            i915_gem_set_caching(device, gem_create.handle, I915_CACHING_CACHED);
-      }
 
       *actual_size = gem_create.size;
       return gem_create.handle;
@@ -123,25 +94,6 @@ i915_gem_create(struct anv_device *device,
       return 0;
 
    *actual_size = gem_create.size;
-
-   if (alloc_flags & ANV_BO_ALLOC_SNOOPED) {
-      assert(alloc_flags & ANV_BO_ALLOC_MAPPED);
-      /* We don't want to change these defaults if it's going to be shared
-       * with another process.
-       */
-      assert(!(alloc_flags & ANV_BO_ALLOC_EXTERNAL));
-
-      /* Regular objects are created I915_CACHING_CACHED on LLC platforms and
-       * I915_CACHING_NONE on non-LLC platforms.  For many internal state
-       * objects, we'd rather take the snooping overhead than risk forgetting
-       * a CLFLUSH somewhere.  Userptr objects are always created as
-       * I915_CACHING_CACHED, which on non-LLC means snooped so there's no
-       * need to do this there.
-       */
-      if (device->info->has_caching_uapi && !device->info->has_llc)
-         i915_gem_set_caching(device, gem_create.handle, I915_CACHING_CACHED);
-   }
-
    return gem_create.handle;
 }
 
@@ -217,14 +169,13 @@ i915_gem_mmap(struct anv_device *device, struct anv_bo *bo, uint64_t offset,
 }
 
 static int
-i915_vm_bind(struct anv_device *device, int num_binds,
-             struct anv_vm_bind *binds)
+i915_gem_vm_bind(struct anv_device *device, struct anv_bo *bo)
 {
    return 0;
 }
 
 static int
-i915_vm_bind_bo(struct anv_device *device, struct anv_bo *bo)
+i915_gem_vm_unbind(struct anv_device *device, struct anv_bo *bo)
 {
    return 0;
 }
@@ -248,33 +199,6 @@ i915_gem_create_userptr(struct anv_device *device, void *mem, uint64_t size)
    return userptr.handle;
 }
 
-static uint32_t
-i915_bo_alloc_flags_to_bo_flags(struct anv_device *device,
-                                enum anv_bo_alloc_flags alloc_flags)
-{
-   struct anv_physical_device *pdevice = device->physical;
-
-   uint64_t bo_flags = EXEC_OBJECT_PINNED;
-
-   if (!(alloc_flags & ANV_BO_ALLOC_32BIT_ADDRESS))
-      bo_flags |= EXEC_OBJECT_SUPPORTS_48B_ADDRESS;
-
-   if (((alloc_flags & ANV_BO_ALLOC_CAPTURE) ||
-        INTEL_DEBUG(DEBUG_CAPTURE_ALL)) &&
-       pdevice->has_exec_capture)
-      bo_flags |= EXEC_OBJECT_CAPTURE;
-
-   if (alloc_flags & ANV_BO_ALLOC_IMPLICIT_WRITE) {
-      assert(alloc_flags & ANV_BO_ALLOC_IMPLICIT_SYNC);
-      bo_flags |= EXEC_OBJECT_WRITE;
-   }
-
-   if (!(alloc_flags & ANV_BO_ALLOC_IMPLICIT_SYNC) && pdevice->has_exec_async)
-      bo_flags |= EXEC_OBJECT_ASYNC;
-
-   return bo_flags;
-}
-
 const struct anv_kmd_backend *
 anv_i915_kmd_backend_get(void)
 {
@@ -283,13 +207,11 @@ anv_i915_kmd_backend_get(void)
       .gem_create_userptr = i915_gem_create_userptr,
       .gem_close = i915_gem_close,
       .gem_mmap = i915_gem_mmap,
-      .vm_bind = i915_vm_bind,
-      .vm_bind_bo = i915_vm_bind_bo,
-      .vm_unbind_bo = i915_vm_bind_bo,
+      .gem_vm_bind = i915_gem_vm_bind,
+      .gem_vm_unbind = i915_gem_vm_unbind,
       .execute_simple_batch = i915_execute_simple_batch,
       .queue_exec_locked = i915_queue_exec_locked,
       .queue_exec_trace = i915_queue_exec_trace,
-      .bo_alloc_flags_to_bo_flags = i915_bo_alloc_flags_to_bo_flags,
    };
    return &i915_backend;
 }

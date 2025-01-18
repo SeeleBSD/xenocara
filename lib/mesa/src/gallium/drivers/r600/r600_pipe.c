@@ -29,7 +29,6 @@
 #include <errno.h>
 #include "pipe/p_shader_tokens.h"
 #include "util/u_debug.h"
-#include "util/u_endian.h"
 #include "util/u_memory.h"
 #include "util/u_screen.h"
 #include "util/u_simple_shaders.h"
@@ -325,7 +324,7 @@ static int r600_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 		return 1;
 
 	case PIPE_CAP_RESOURCE_FROM_USER_MEMORY:
-		return !UTIL_ARCH_BIG_ENDIAN && rscreen->b.info.has_userptr;
+		return !R600_BIG_ENDIAN && rscreen->b.info.has_userptr;
 
 	case PIPE_CAP_COMPUTE:
 		return rscreen->b.gfx_level > R700;
@@ -408,6 +407,11 @@ static int r600_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 
 	case PIPE_CAP_TWO_SIDED_COLOR:
 		return 0;
+	case PIPE_CAP_INT64_DIVMOD:
+		/* it is actually not supported, but the nir lowering handles this correctly whereas
+		 * the glsl lowering path seems to not initialize the buildins correctly.
+		 */
+		return 1;
 	case PIPE_CAP_CULL_DISTANCE:
 		return 1;
 
@@ -615,6 +619,8 @@ static int r600_get_shader_param(struct pipe_screen* pscreen,
 		ir |= 1 << PIPE_SHADER_IR_NIR;
 		return ir;
 	}
+	case PIPE_SHADER_CAP_DROUND_SUPPORTED:
+		return 0;
 	case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
 	case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
 		if (rscreen->b.family >= CHIP_CEDAR &&

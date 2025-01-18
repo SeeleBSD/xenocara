@@ -119,6 +119,7 @@ nir_options = {
    .lower_uadd_carry = true,
    .lower_usub_borrow = true,
    .lower_mul_high = true,
+   .lower_rotate = true,
    .lower_pack_half_2x16 = true,
    .lower_pack_unorm_4x8 = true,
    .lower_pack_snorm_4x8 = true,
@@ -2125,7 +2126,7 @@ static bool
 is_phi_src(nir_def *ssa)
 {
    nir_foreach_use(src, ssa)
-      if (nir_src_parent_instr(src)->type == nir_instr_type_phi)
+      if (src->parent_instr->type == nir_instr_type_phi)
          return true;
    return false;
 }
@@ -3077,11 +3078,11 @@ emit_barrier_impl(struct ntd_context *ctx, nir_variable_mode modes, mesa_scope e
 
    bool is_compute = ctx->mod.shader_kind == DXIL_COMPUTE_SHADER;
 
-   if ((modes & (nir_var_mem_ssbo | nir_var_mem_global | nir_var_image)) &&
-       (mem_scope > SCOPE_WORKGROUP || !is_compute)) {
-      flags |= DXIL_BARRIER_MODE_UAV_FENCE_GLOBAL;
-   } else {
-      flags |= DXIL_BARRIER_MODE_UAV_FENCE_THREAD_GROUP;
+   if (modes & (nir_var_mem_ssbo | nir_var_mem_global | nir_var_image)) {
+      if (mem_scope > SCOPE_WORKGROUP || !is_compute)
+         flags |= DXIL_BARRIER_MODE_UAV_FENCE_GLOBAL;
+      else
+         flags |= DXIL_BARRIER_MODE_UAV_FENCE_THREAD_GROUP;
    }
 
    if ((modes & nir_var_mem_shared) && is_compute)

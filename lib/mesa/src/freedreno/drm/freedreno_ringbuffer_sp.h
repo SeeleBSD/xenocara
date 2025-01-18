@@ -114,10 +114,6 @@ struct fd_ringbuffer_sp {
       struct {
          struct fd_pipe *pipe;
          DECLARE_ARRAY(struct fd_bo *, reloc_bos);
-#ifndef NDEBUG
-         /* BOs to assert are attached to submit: */
-         DECLARE_ARRAY(struct fd_bo *, assert_bos);
-#endif
 
          /**
           * The seqno of the last submit we were emitted to.  For stateobjs

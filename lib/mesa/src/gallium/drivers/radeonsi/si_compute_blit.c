@@ -317,6 +317,8 @@ static void si_compute_clear_12bytes_buffer(struct si_context *sctx, struct pipe
                                             const uint32_t *clear_value, unsigned flags,
                                             enum si_coherency coher)
 {
+   struct pipe_context *ctx = &sctx->b;
+
    assert(dst_offset % 4 == 0);
    assert(size % 4 == 0);
    unsigned size_12 = DIV_ROUND_UP(size, 12);
@@ -331,7 +333,7 @@ static void si_compute_clear_12bytes_buffer(struct si_context *sctx, struct pipe
    struct pipe_grid_info info = {0};
 
    if (!sctx->cs_clear_12bytes_buffer)
-      sctx->cs_clear_12bytes_buffer = si_clear_12bytes_buffer_shader(sctx);
+      sctx->cs_clear_12bytes_buffer = si_clear_12bytes_buffer_shader(ctx);
 
    info.block[0] = 64;
    info.last_block[0] = size_12 % 64;
@@ -495,10 +497,10 @@ void si_clear_buffer(struct si_context *sctx, struct pipe_resource *dst,
 void si_screen_clear_buffer(struct si_screen *sscreen, struct pipe_resource *dst, uint64_t offset,
                             uint64_t size, unsigned value, unsigned flags)
 {
-   struct si_context *ctx = si_get_aux_context(&sscreen->aux_context.general);
+   struct si_context *ctx = si_get_aux_context(sscreen);
    si_clear_buffer(ctx, dst, offset, size, &value, 4, flags,
                    SI_COHERENCY_SHADER, SI_AUTO_SELECT_CLEAR_METHOD);
-   si_put_aux_context_flush(&sscreen->aux_context.general);
+   si_put_aux_context_flush(sscreen);
 }
 
 static void si_pipe_clear_buffer(struct pipe_context *ctx, struct pipe_resource *dst,
@@ -998,7 +1000,7 @@ void si_compute_clear_render_target(struct pipe_context *ctx, struct pipe_surfac
 
    if (dstsurf->texture->target != PIPE_TEXTURE_1D_ARRAY) {
       if (!sctx->cs_clear_render_target)
-         sctx->cs_clear_render_target = si_clear_render_target_shader(sctx, PIPE_TEXTURE_2D_ARRAY);
+         sctx->cs_clear_render_target = si_clear_render_target_shader(ctx);
       shader = sctx->cs_clear_render_target;
 
       info.block[0] = 8;
@@ -1011,7 +1013,7 @@ void si_compute_clear_render_target(struct pipe_context *ctx, struct pipe_surfac
       info.grid[2] = num_layers;
    } else {
       if (!sctx->cs_clear_render_target_1d_array)
-         sctx->cs_clear_render_target_1d_array = si_clear_render_target_shader(sctx, PIPE_TEXTURE_1D_ARRAY);
+         sctx->cs_clear_render_target_1d_array = si_clear_render_target_shader_1d_array(ctx);
       shader = sctx->cs_clear_render_target_1d_array;
 
       info.block[0] = 64;

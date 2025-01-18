@@ -52,7 +52,6 @@ struct pvr_shader_factory_info {
    uint32_t num_driver_consts;
    const struct pvr_static_buffer *static_const_buffer;
    uint32_t num_static_const;
-   uint32_t msaa_sample_count;
 };
 
 static const uint8_t availability_query_write_shader[144] = { 0 };
@@ -85,7 +84,6 @@ static const struct pvr_shader_factory_info availability_query_write_info = {
    0,
    availability_query_write_static_consts,
    0,
-   ~0,
 };
 
 static const uint8_t copy_query_results_shader[384] = { 0 };
@@ -116,7 +114,6 @@ static const struct pvr_shader_factory_info copy_query_results_info = {
    0,
    copy_query_results_static_consts,
    0,
-   ~0,
 };
 
 static const uint8_t reset_query_shader_code[136] = { 0 };
@@ -147,7 +144,6 @@ static const struct pvr_shader_factory_info reset_query_info = {
    0,
    reset_query_static_consts,
    0,
-   ~0,
 };
 
 static const struct pvr_shader_factory_info
@@ -183,7 +179,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_1_dw_0_offt_out_mem_shader_code[8] = {
@@ -210,7 +205,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_2_dw_0_offt_out_reg_shader_code[8] = {
@@ -237,7 +231,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_2_dw_0_offt_out_mem_shader_code[8] = {
@@ -264,7 +257,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_3_dw_0_offt_out_reg_shader_code[8] = {
@@ -291,7 +283,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_3_dw_0_offt_out_mem_shader_code[8] = {
@@ -318,7 +309,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_4_dw_0_offt_out_reg_shader_code[8] = {
@@ -345,7 +335,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_4_dw_0_offt_out_mem_shader_code[8] = {
@@ -372,7 +361,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_1_dw_1_offt_out_reg_shader_code[8] = {
@@ -399,7 +387,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_1_dw_1_offt_out_mem_shader_code[8] = {
@@ -426,7 +413,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_2_dw_1_offt_out_reg_shader_code[8] = {
@@ -453,7 +439,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_2_dw_1_offt_out_mem_shader_code[8] = {
@@ -480,7 +465,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_3_dw_1_offt_out_reg_shader_code[8] = {
@@ -507,7 +491,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_3_dw_1_offt_out_mem_shader_code[8] = {
@@ -534,7 +517,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_4_dw_1_offt_out_reg_shader_code[8] = {
@@ -613,7 +595,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_1_dw_2_offt_out_mem_shader_code[8] = {
@@ -640,7 +621,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_2_dw_2_offt_out_reg_shader_code[8] = {
@@ -667,7 +647,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_2_dw_2_offt_out_mem_shader_code[8] = {
@@ -694,7 +673,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_3_dw_2_offt_out_reg_shader_code[8] = {
@@ -825,7 +803,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 
 static const uint8_t clear_attachments_1_dw_3_offt_out_mem_shader_code[8] = {
@@ -1528,7 +1505,6 @@ static const struct pvr_shader_factory_info
       0,
       NULL,
       0,
-      1,
    };
 static struct {
    const uint8_t *code;
@@ -1724,7 +1700,6 @@ static const struct pvr_shader_factory_info spm_load_1X_1_regs_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_2_regs_shader_code[8] = { 0 };
@@ -1746,7 +1721,6 @@ static const struct pvr_shader_factory_info spm_load_1X_2_regs_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_4_regs_shader_code[8] = { 0 };
@@ -1768,7 +1742,6 @@ static const struct pvr_shader_factory_info spm_load_1X_4_regs_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_1_buffers_shader_code[8] = { 0 };
@@ -1792,7 +1765,6 @@ static const struct pvr_shader_factory_info spm_load_1X_1_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_2_buffers_shader_code[8] = { 0 };
@@ -1816,7 +1788,6 @@ static const struct pvr_shader_factory_info spm_load_1X_2_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_3_buffers_shader_code[8] = { 0 };
@@ -1840,7 +1811,6 @@ static const struct pvr_shader_factory_info spm_load_1X_3_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_4_buffers_shader_code[8] = { 0 };
@@ -1864,7 +1834,6 @@ static const struct pvr_shader_factory_info spm_load_1X_4_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_5_buffers_shader_code[8] = { 0 };
@@ -1888,7 +1857,6 @@ static const struct pvr_shader_factory_info spm_load_1X_5_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_6_buffers_shader_code[8] = { 0 };
@@ -1912,7 +1880,6 @@ static const struct pvr_shader_factory_info spm_load_1X_6_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_1X_7_buffers_shader_code[8] = { 0 };
@@ -1936,7 +1903,6 @@ static const struct pvr_shader_factory_info spm_load_1X_7_buffers_info = {
    0,
    NULL,
    0,
-   1,
 };
 
 static const uint8_t spm_load_2X_1_regs_shader_code[8] = { 0 };
@@ -1958,7 +1924,6 @@ static const struct pvr_shader_factory_info spm_load_2X_1_regs_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_2_regs_shader_code[8] = { 0 };
@@ -1980,7 +1945,6 @@ static const struct pvr_shader_factory_info spm_load_2X_2_regs_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_4_regs_shader_code[8] = { 0 };
@@ -2002,7 +1966,6 @@ static const struct pvr_shader_factory_info spm_load_2X_4_regs_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_1_buffers_shader_code[8] = { 0 };
@@ -2026,7 +1989,6 @@ static const struct pvr_shader_factory_info spm_load_2X_1_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_2_buffers_shader_code[8] = { 0 };
@@ -2050,7 +2012,6 @@ static const struct pvr_shader_factory_info spm_load_2X_2_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_3_buffers_shader_code[8] = { 0 };
@@ -2074,7 +2035,6 @@ static const struct pvr_shader_factory_info spm_load_2X_3_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_4_buffers_shader_code[8] = { 0 };
@@ -2098,7 +2058,6 @@ static const struct pvr_shader_factory_info spm_load_2X_4_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_5_buffers_shader_code[8] = { 0 };
@@ -2122,7 +2081,6 @@ static const struct pvr_shader_factory_info spm_load_2X_5_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_6_buffers_shader_code[8] = { 0 };
@@ -2146,7 +2104,6 @@ static const struct pvr_shader_factory_info spm_load_2X_6_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_2X_7_buffers_shader_code[8] = { 0 };
@@ -2170,7 +2127,6 @@ static const struct pvr_shader_factory_info spm_load_2X_7_buffers_info = {
    0,
    NULL,
    0,
-   2,
 };
 
 static const uint8_t spm_load_4X_1_regs_shader_code[8] = { 0 };
@@ -2192,7 +2148,6 @@ static const struct pvr_shader_factory_info spm_load_4X_1_regs_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_2_regs_shader_code[8] = { 0 };
@@ -2214,14 +2169,13 @@ static const struct pvr_shader_factory_info spm_load_4X_2_regs_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_4_regs_shader_code[8] = { 0 };
 
 static const struct pvr_shader_factory_info spm_load_4X_4_regs_info = {
    0, 0, 0,    0, 0,    0, spm_load_4X_4_regs_shader_code, 0, 0, NULL,
-   0, 0, NULL, 0, NULL, 0, 4
+   0, 0, NULL, 0, NULL, 0,
 };
 
 static const uint8_t spm_load_4X_1_buffers_shader_code[8] = { 0 };
@@ -2245,7 +2199,6 @@ static const struct pvr_shader_factory_info spm_load_4X_1_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_2_buffers_shader_code[8] = { 0 };
@@ -2269,7 +2222,6 @@ static const struct pvr_shader_factory_info spm_load_4X_2_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_3_buffers_shader_code[8] = { 0 };
@@ -2293,7 +2245,6 @@ static const struct pvr_shader_factory_info spm_load_4X_3_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_4_buffers_shader_code[8] = { 0 };
@@ -2317,7 +2268,6 @@ static const struct pvr_shader_factory_info spm_load_4X_4_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_5_buffers_shader_code[8] = { 0 };
@@ -2341,7 +2291,6 @@ static const struct pvr_shader_factory_info spm_load_4X_5_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_6_buffers_shader_code[8] = { 0 };
@@ -2365,7 +2314,6 @@ static const struct pvr_shader_factory_info spm_load_4X_6_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_4X_7_buffers_shader_code[8] = { 0 };
@@ -2389,7 +2337,6 @@ static const struct pvr_shader_factory_info spm_load_4X_7_buffers_info = {
    0,
    NULL,
    0,
-   4,
 };
 
 static const uint8_t spm_load_8X_1_regs_shader_code[8] = { 0 };
@@ -2411,7 +2358,6 @@ static const struct pvr_shader_factory_info spm_load_8X_1_regs_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_2_regs_shader_code[8] = { 0 };
@@ -2433,7 +2379,6 @@ static const struct pvr_shader_factory_info spm_load_8X_2_regs_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_4_regs_shader_code[8] = { 0 };
@@ -2455,7 +2400,6 @@ static const struct pvr_shader_factory_info spm_load_8X_4_regs_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_1_buffers_shader_code[8] = { 0 };
@@ -2479,7 +2423,6 @@ static const struct pvr_shader_factory_info spm_load_8X_1_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_2_buffers_shader_code[8] = { 0 };
@@ -2503,7 +2446,6 @@ static const struct pvr_shader_factory_info spm_load_8X_2_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_3_buffers_shader_code[8] = { 0 };
@@ -2527,7 +2469,6 @@ static const struct pvr_shader_factory_info spm_load_8X_3_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_4_buffers_shader_code[8] = { 0 };
@@ -2551,7 +2492,6 @@ static const struct pvr_shader_factory_info spm_load_8X_4_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_5_buffers_shader_code[8] = { 0 };
@@ -2575,7 +2515,6 @@ static const struct pvr_shader_factory_info spm_load_8X_5_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_6_buffers_shader_code[8] = { 0 };
@@ -2599,7 +2538,6 @@ static const struct pvr_shader_factory_info spm_load_8X_6_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 
 static const uint8_t spm_load_8X_7_buffers_shader_code[8] = { 0 };
@@ -2623,7 +2561,6 @@ static const struct pvr_shader_factory_info spm_load_8X_7_buffers_info = {
    0,
    NULL,
    0,
-   8,
 };
 static struct {
    const uint8_t *code;

@@ -43,20 +43,9 @@ lvp_image_create(VkDevice _device,
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    image->alignment = 16;
-   image->plane_count = vk_format_get_plane_count(pCreateInfo->format);
-   image->disjoint = image->plane_count > 1 &&
-                     (pCreateInfo->flags & VK_IMAGE_CREATE_DISJOINT_BIT);
-
-   const struct vk_format_ycbcr_info *ycbcr_info =
-      vk_format_get_ycbcr_info(pCreateInfo->format);
-   for (unsigned p = 0; p < image->plane_count; p++) {
+   {
       struct pipe_resource template;
-      VkFormat format = ycbcr_info ?
-         ycbcr_info->planes[p].format : pCreateInfo->format;
-      const uint8_t width_scale = ycbcr_info ?
-         ycbcr_info->planes[p].denominator_scales[0] : 1;
-      const uint8_t height_scale = ycbcr_info ?
-         ycbcr_info->planes[p].denominator_scales[1] : 1;
+
       memset(&template, 0, sizeof(template));
 
       template.screen = device->pscreen;
@@ -73,7 +62,7 @@ lvp_image_create(VkDevice _device,
          break;
       }
 
-      template.format = lvp_vk_format_to_pipe_format(format);
+      template.format = lvp_vk_format_to_pipe_format(pCreateInfo->format);
 
       bool is_ds = util_format_is_depth_or_stencil(template.format);
 
@@ -103,20 +92,18 @@ lvp_image_create(VkDevice _device,
                                 VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT))
          template.bind |= PIPE_BIND_SHADER_IMAGE;
 
-      template.width0 = pCreateInfo->extent.width / width_scale;
-      template.height0 = pCreateInfo->extent.height / height_scale;
+      template.width0 = pCreateInfo->extent.width;
+      template.height0 = pCreateInfo->extent.height;
       template.depth0 = pCreateInfo->extent.depth;
       template.array_size = pCreateInfo->arrayLayers;
       template.last_level = pCreateInfo->mipLevels - 1;
       template.nr_samples = pCreateInfo->samples;
       template.nr_storage_samples = pCreateInfo->samples;
-      image->planes[p].bo = device->pscreen->resource_create_unbacked(device->pscreen,
-                                                                      &template,
-                                                                      &image->planes[p].size);
-      if (!image->planes[p].bo)
+      image->bo = device->pscreen->resource_create_unbacked(device->pscreen,
+                                                            &template,
+                                                            &image->size);
+      if (!image->bo)
          return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-      image->size += image->planes[p].size;
    }
    *pImage = lvp_image_to_handle(image);
 
@@ -180,8 +167,7 @@ lvp_DestroyImage(VkDevice _device, VkImage _image,
 
    if (!_image)
      return;
-   for (unsigned p = 0; p < image->plane_count; p++)
-      pipe_resource_reference(&image->planes[p].bo, NULL);
+   pipe_resource_reference(&image->bo, NULL);
    vk_image_destroy(&device->vk, pAllocator, &image->vk);
 }
 
@@ -202,7 +188,7 @@ static inline char conv_depth_swiz(char swiz) {
 }
 
 static struct pipe_sampler_view *
-lvp_create_samplerview(struct pipe_context *pctx, struct lvp_image_view *iv, VkFormat plane_format, unsigned image_plane)
+lvp_create_samplerview(struct pipe_context *pctx, struct lvp_image_view *iv)
 {
    if (!iv)
       return NULL;
@@ -210,13 +196,13 @@ lvp_create_samplerview(struct pipe_context *pctx, struct lvp_image_view *iv, VkF
    struct pipe_sampler_view templ;
    enum pipe_format pformat;
    if (iv->vk.aspects == VK_IMAGE_ASPECT_DEPTH_BIT)
-      pformat = lvp_vk_format_to_pipe_format(plane_format);
+      pformat = lvp_vk_format_to_pipe_format(iv->vk.format);
    else if (iv->vk.aspects == VK_IMAGE_ASPECT_STENCIL_BIT)
-      pformat = util_format_stencil_only(lvp_vk_format_to_pipe_format(plane_format));
+      pformat = util_format_stencil_only(lvp_vk_format_to_pipe_format(iv->vk.format));
    else
-      pformat = lvp_vk_format_to_pipe_format(plane_format);
+      pformat = lvp_vk_format_to_pipe_format(iv->vk.format);
    u_sampler_view_default_template(&templ,
-                                   iv->image->planes[image_plane].bo,
+                                   iv->image->bo,
                                    pformat);
    if (iv->vk.view_type == VK_IMAGE_VIEW_TYPE_1D)
       templ.target = PIPE_TEXTURE_1D;
@@ -249,23 +235,23 @@ lvp_create_samplerview(struct pipe_context *pctx, struct lvp_image_view *iv, VkF
       templ.swizzle_a = conv_depth_swiz(templ.swizzle_a);
    }
 
-   return pctx->create_sampler_view(pctx, iv->image->planes[image_plane].bo, &templ);
+   return pctx->create_sampler_view(pctx, iv->image->bo, &templ);
 }
 
 static struct pipe_image_view
-lvp_create_imageview(const struct lvp_image_view *iv, VkFormat plane_format, unsigned image_plane)
+lvp_create_imageview(const struct lvp_image_view *iv)
 {
    struct pipe_image_view view = {0};
    if (!iv)
       return view;
 
-   view.resource = iv->image->planes[image_plane].bo;
+   view.resource = iv->image->bo;
    if (iv->vk.aspects == VK_IMAGE_ASPECT_DEPTH_BIT)
-      view.format = lvp_vk_format_to_pipe_format(plane_format);
+      view.format = lvp_vk_format_to_pipe_format(iv->vk.format);
    else if (iv->vk.aspects == VK_IMAGE_ASPECT_STENCIL_BIT)
-      view.format = util_format_stencil_only(lvp_vk_format_to_pipe_format(plane_format));
+      view.format = util_format_stencil_only(lvp_vk_format_to_pipe_format(iv->vk.format));
    else
-      view.format = lvp_vk_format_to_pipe_format(plane_format);
+      view.format = lvp_vk_format_to_pipe_format(iv->vk.format);
 
    if (iv->vk.view_type == VK_IMAGE_VIEW_TYPE_3D) {
       view.u.tex.first_layer = iv->vk.storage.z_slice_offset;
@@ -297,45 +283,16 @@ lvp_CreateImageView(VkDevice _device,
    view->image = image;
    view->surface = NULL;
 
-   if (image->vk.aspects & (VK_IMAGE_ASPECT_DEPTH_BIT |
-                            VK_IMAGE_ASPECT_STENCIL_BIT)) {
-      assert(image->plane_count == 1);
-      assert(lvp_image_aspects_to_plane(image, view->vk.aspects) == 0);
-      view->plane_count = 1;
-      view->planes[0].image_plane = 0;
-   } else {
-      /* For other formats, retrieve the plane count from the aspect mask
-       * and then walk through the aspect mask to map each image plane
-       * to its corresponding view plane
-       */
-      assert(util_bitcount(view->vk.aspects) ==
-             vk_format_get_plane_count(view->vk.format));
-      view->plane_count = 0;
-      u_foreach_bit(aspect_bit, view->vk.aspects) {
-         uint8_t image_plane = lvp_image_aspects_to_plane(image, 1u << aspect_bit);
-         view->planes[view->plane_count++].image_plane = image_plane;
-      }
-   }
-
    simple_mtx_lock(&device->queue.lock);
 
-   for (unsigned view_plane = 0; view_plane < view->plane_count; view_plane++) {
-      const uint8_t image_plane = view->planes[view_plane].image_plane;
-      const struct vk_format_ycbcr_info *ycbcr_info =
-         vk_format_get_ycbcr_info(view->vk.format);
-      assert(ycbcr_info || view_plane == 0);
-      VkFormat plane_format = ycbcr_info ?
-         ycbcr_info->planes[view_plane].format : view->vk.format;
+   if (image->bo->bind & PIPE_BIND_SHADER_IMAGE) {
+      view->iv = lvp_create_imageview(view);
+      view->image_handle = (void *)(uintptr_t)device->queue.ctx->create_image_handle(device->queue.ctx, &view->iv);
+   }
 
-      if (image->planes[image_plane].bo->bind & PIPE_BIND_SHADER_IMAGE) {
-         view->planes[view_plane].iv = lvp_create_imageview(view, plane_format, image_plane);
-         view->planes[view_plane].image_handle = (void *)(uintptr_t)device->queue.ctx->create_image_handle(device->queue.ctx, &view->planes[view_plane].iv);
-      }
-
-      if (image->planes[image_plane].bo->bind & PIPE_BIND_SAMPLER_VIEW) {
-         view->planes[view_plane].sv = lvp_create_samplerview(device->queue.ctx, view, plane_format, image_plane);
-         view->planes[view_plane].texture_handle = (void *)(uintptr_t)device->queue.ctx->create_texture_handle(device->queue.ctx, view->planes[view_plane].sv, NULL);
-      }
+   if (image->bo->bind & PIPE_BIND_SAMPLER_VIEW) {
+      view->sv = lvp_create_samplerview(device->queue.ctx, view);
+      view->texture_handle = (void *)(uintptr_t)device->queue.ctx->create_texture_handle(device->queue.ctx, view->sv, NULL);
    }
 
    simple_mtx_unlock(&device->queue.lock);
@@ -357,12 +314,11 @@ lvp_DestroyImageView(VkDevice _device, VkImageView _iview,
 
    simple_mtx_lock(&device->queue.lock);
 
-   for (uint8_t plane = 0; plane < iview->plane_count; plane++) {
-      device->queue.ctx->delete_image_handle(device->queue.ctx, (uint64_t)(uintptr_t)iview->planes[plane].image_handle);
+   device->queue.ctx->delete_image_handle(device->queue.ctx, (uint64_t)(uintptr_t)iview->image_handle);
 
-      pipe_sampler_view_reference(&iview->planes[plane].sv, NULL);
-      device->queue.ctx->delete_texture_handle(device->queue.ctx, (uint64_t)(uintptr_t)iview->planes[plane].texture_handle);
-   }
+   pipe_sampler_view_reference(&iview->sv, NULL);
+   device->queue.ctx->delete_texture_handle(device->queue.ctx, (uint64_t)(uintptr_t)iview->texture_handle);
+
    simple_mtx_unlock(&device->queue.lock);
 
    pipe_surface_reference(&iview->surface, NULL);
@@ -379,12 +335,9 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageSubresourceLayout(
    LVP_FROM_HANDLE(lvp_image, image, _image);
    uint64_t value;
 
-   const uint8_t p = lvp_image_aspects_to_plane(image, pSubresource->aspectMask);
-   const struct lvp_image_plane *plane = &image->planes[p];
-
    device->pscreen->resource_get_param(device->pscreen,
                                        NULL,
-                                       plane->bo,
+                                       image->bo,
                                        0,
                                        pSubresource->arrayLayer,
                                        pSubresource->mipLevel,
@@ -395,7 +348,7 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageSubresourceLayout(
 
    device->pscreen->resource_get_param(device->pscreen,
                                        NULL,
-                                       plane->bo,
+                                       image->bo,
                                        0,
                                        pSubresource->arrayLayer,
                                        pSubresource->mipLevel,
@@ -406,22 +359,32 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageSubresourceLayout(
 
    device->pscreen->resource_get_param(device->pscreen,
                                        NULL,
-                                       plane->bo,
+                                       image->bo,
                                        0,
                                        pSubresource->arrayLayer,
                                        pSubresource->mipLevel,
                                        PIPE_RESOURCE_PARAM_LAYER_STRIDE,
                                        0, &value);
 
-   if (plane->bo->target == PIPE_TEXTURE_3D) {
+   if (image->bo->target == PIPE_TEXTURE_3D) {
       pLayout->depthPitch = value;
       pLayout->arrayPitch = 0;
    } else {
       pLayout->depthPitch = 0;
       pLayout->arrayPitch = value;
    }
-   pLayout->offset += plane->plane_offset;
-   pLayout->size = plane->size;
+   pLayout->size = image->size;
+
+   switch (pSubresource->aspectMask) {
+   case VK_IMAGE_ASPECT_COLOR_BIT:
+      break;
+   case VK_IMAGE_ASPECT_DEPTH_BIT:
+      break;
+   case VK_IMAGE_ASPECT_STENCIL_BIT:
+      break;
+   default:
+      assert(!"Invalid image aspect");
+   }
 }
 
 VKAPI_ATTR void VKAPI_CALL lvp_GetImageSubresourceLayout2EXT(
@@ -600,9 +563,9 @@ lvp_CreateBufferView(VkDevice _device,
    struct lvp_buffer_view *view;
 
    view = vk_buffer_view_create(&device->vk,
-                                pCreateInfo,
-                                pAllocator,
-                                sizeof(*view));
+				pCreateInfo,
+				pAllocator,
+				sizeof(*view));
    if (!view)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
@@ -656,8 +619,6 @@ lvp_CopyMemoryToImageEXT(VkDevice _device, const VkCopyMemoryToImageInfoEXT *pCo
    LVP_FROM_HANDLE(lvp_image, image, pCopyMemoryToImageInfo->dstImage);
    for (unsigned i = 0; i < pCopyMemoryToImageInfo->regionCount; i++) {
       const VkMemoryToImageCopyEXT *copy = &pCopyMemoryToImageInfo->pRegions[i];
-      const VkImageAspectFlagBits aspects = copy->imageSubresource.aspectMask;
-      uint8_t plane = lvp_image_aspects_to_plane(image, aspects);
       struct pipe_box box = {
          .x = copy->imageOffset.x,
          .y = copy->imageOffset.y,
@@ -665,7 +626,7 @@ lvp_CopyMemoryToImageEXT(VkDevice _device, const VkCopyMemoryToImageInfoEXT *pCo
          .height = copy->imageExtent.height,
          .depth = 1,
       };
-      switch (image->planes[plane].bo->target) {
+      switch (image->bo->target) {
       case PIPE_TEXTURE_CUBE:
       case PIPE_TEXTURE_CUBE_ARRAY:
       case PIPE_TEXTURE_2D_ARRAY:
@@ -683,9 +644,9 @@ lvp_CopyMemoryToImageEXT(VkDevice _device, const VkCopyMemoryToImageInfoEXT *pCo
          break;
       }
 
-      unsigned stride = util_format_get_stride(image->planes[plane].bo->format, copy->memoryRowLength ? copy->memoryRowLength : box.width);
-      unsigned layer_stride = util_format_get_2d_size(image->planes[plane].bo->format, stride, copy->memoryImageHeight ? copy->memoryImageHeight : box.height);
-      device->queue.ctx->texture_subdata(device->queue.ctx, image->planes[plane].bo, copy->imageSubresource.mipLevel, 0,
+      unsigned stride = util_format_get_stride(image->bo->format, copy->memoryRowLength ? copy->memoryRowLength : box.width);
+      unsigned layer_stride = util_format_get_2d_size(image->bo->format, stride, copy->memoryImageHeight ? copy->memoryImageHeight : box.height);
+      device->queue.ctx->texture_subdata(device->queue.ctx, image->bo, copy->imageSubresource.mipLevel, 0,
                                          &box, copy->pHostPointer, stride, layer_stride);
    }
    return VK_SUCCESS;
@@ -699,10 +660,6 @@ lvp_CopyImageToMemoryEXT(VkDevice _device, const VkCopyImageToMemoryInfoEXT *pCo
 
    for (unsigned i = 0; i < pCopyImageToMemoryInfo->regionCount; i++) {
       const VkImageToMemoryCopyEXT *copy = &pCopyImageToMemoryInfo->pRegions[i];
-
-      const VkImageAspectFlagBits aspects = copy->imageSubresource.aspectMask;
-      uint8_t plane = lvp_image_aspects_to_plane(image, aspects);
-
       struct pipe_box box = {
          .x = copy->imageOffset.x,
          .y = copy->imageOffset.y,
@@ -710,7 +667,7 @@ lvp_CopyImageToMemoryEXT(VkDevice _device, const VkCopyImageToMemoryInfoEXT *pCo
          .height = copy->imageExtent.height,
          .depth = 1,
       };
-      switch (image->planes[plane].bo->target) {
+      switch (image->bo->target) {
       case PIPE_TEXTURE_CUBE:
       case PIPE_TEXTURE_CUBE_ARRAY:
       case PIPE_TEXTURE_2D_ARRAY:
@@ -728,14 +685,14 @@ lvp_CopyImageToMemoryEXT(VkDevice _device, const VkCopyImageToMemoryInfoEXT *pCo
          break;
       }
       struct pipe_transfer *xfer;
-      uint8_t *data = device->queue.ctx->texture_map(device->queue.ctx, image->planes[plane].bo, copy->imageSubresource.mipLevel,
+      uint8_t *data = device->queue.ctx->texture_map(device->queue.ctx, image->bo, copy->imageSubresource.mipLevel,
                                                      PIPE_MAP_READ | PIPE_MAP_UNSYNCHRONIZED | PIPE_MAP_THREAD_SAFE, &box, &xfer);
       if (!data)
          return VK_ERROR_MEMORY_MAP_FAILED;
 
-      unsigned stride = util_format_get_stride(image->planes[plane].bo->format, copy->memoryRowLength ? copy->memoryRowLength : box.width);
-      unsigned layer_stride = util_format_get_2d_size(image->planes[plane].bo->format, stride, copy->memoryImageHeight ? copy->memoryImageHeight : box.height);
-      util_copy_box(copy->pHostPointer, image->planes[plane].bo->format, stride, layer_stride,
+      unsigned stride = util_format_get_stride(image->bo->format, copy->memoryRowLength ? copy->memoryRowLength : box.width);
+      unsigned layer_stride = util_format_get_2d_size(image->bo->format, stride, copy->memoryImageHeight ? copy->memoryImageHeight : box.height);
+      util_copy_box(copy->pHostPointer, image->bo->format, stride, layer_stride,
                     /* offsets are all zero because texture_map handles the offset */
                     0, 0, 0, box.width, box.height, box.depth, data, xfer->stride, xfer->layer_stride, 0, 0, 0);
       pipe_texture_unmap(device->queue.ctx, xfer);
@@ -752,18 +709,12 @@ lvp_CopyImageToImageEXT(VkDevice _device, const VkCopyImageToImageInfoEXT *pCopy
 
    /* basically the same as handle_copy_image() */
    for (unsigned i = 0; i < pCopyImageToImageInfo->regionCount; i++) {
-
-      const VkImageAspectFlagBits src_aspects = pCopyImageToImageInfo->pRegions[i].srcSubresource.aspectMask;
-      uint8_t src_plane = lvp_image_aspects_to_plane(src_image, src_aspects);
-      const VkImageAspectFlagBits dst_aspects = pCopyImageToImageInfo->pRegions[i].dstSubresource.aspectMask;
-      uint8_t dst_plane = lvp_image_aspects_to_plane(dst_image, dst_aspects);
-
       struct pipe_box src_box;
       src_box.x = pCopyImageToImageInfo->pRegions[i].srcOffset.x;
       src_box.y = pCopyImageToImageInfo->pRegions[i].srcOffset.y;
       src_box.width = pCopyImageToImageInfo->pRegions[i].extent.width;
       src_box.height = pCopyImageToImageInfo->pRegions[i].extent.height;
-      if (src_image->planes[src_plane].bo->target == PIPE_TEXTURE_3D) {
+      if (src_image->bo->target == PIPE_TEXTURE_3D) {
          src_box.depth = pCopyImageToImageInfo->pRegions[i].extent.depth;
          src_box.z = pCopyImageToImageInfo->pRegions[i].srcOffset.z;
       } else {
@@ -771,15 +722,15 @@ lvp_CopyImageToImageEXT(VkDevice _device, const VkCopyImageToImageInfoEXT *pCopy
          src_box.z = pCopyImageToImageInfo->pRegions[i].srcSubresource.baseArrayLayer;
       }
 
-      unsigned dstz = dst_image->planes[dst_plane].bo->target == PIPE_TEXTURE_3D ?
+      unsigned dstz = dst_image->bo->target == PIPE_TEXTURE_3D ?
                       pCopyImageToImageInfo->pRegions[i].dstOffset.z :
                       pCopyImageToImageInfo->pRegions[i].dstSubresource.baseArrayLayer;
-      device->queue.ctx->resource_copy_region(device->queue.ctx, dst_image->planes[dst_plane].bo,
+      device->queue.ctx->resource_copy_region(device->queue.ctx, dst_image->bo,
                                               pCopyImageToImageInfo->pRegions[i].dstSubresource.mipLevel,
                                               pCopyImageToImageInfo->pRegions[i].dstOffset.x,
                                               pCopyImageToImageInfo->pRegions[i].dstOffset.y,
                                               dstz,
-                                              src_image->planes[src_plane].bo,
+                                              src_image->bo,
                                               pCopyImageToImageInfo->pRegions[i].srcSubresource.mipLevel,
                                               &src_box);
    }

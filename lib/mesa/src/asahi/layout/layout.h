@@ -123,11 +123,6 @@ struct ail_layout {
     * used as a writeable image (either PBE or image atomics).
     */
    bool writeable_image;
-
-   /* Must the layout support rendering? If false, the layout MUST NOT be used
-    * for rendering, either PBE or ZLS.
-    */
-   bool renderable;
 };
 
 static inline uint32_t

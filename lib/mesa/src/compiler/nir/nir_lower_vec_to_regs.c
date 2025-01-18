@@ -78,10 +78,10 @@ try_coalesce(nir_builder *b, nir_def *reg, nir_alu_instr *vec,
     * only use of the source value.
     */
    nir_foreach_use_including_if(src, vec->src[start_idx].src.ssa) {
-      if (nir_src_is_if(src))
+      if (src->is_if)
          return 0;
 
-      if (nir_src_parent_instr(src) != &vec->instr)
+      if (src->parent_instr != &vec->instr)
          return 0;
    }
 

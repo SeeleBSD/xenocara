@@ -36,7 +36,6 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_prim.h"
-#include "util/u_surface.h"
 #include "util/u_transfer.h"
 #include "util/u_helpers.h"
 #include "util/slab.h"
@@ -711,8 +710,7 @@ static void *virgl_shader_encoder(struct pipe_context *ctx,
          .unoptimized_ra = true,
          .lower_fabs = true,
          .lower_ssbo_bindings =
-               rs->caps.caps.v2.host_feature_check_version >= 16,
-         .non_compute_membar_needs_all_modes = true
+               rs->caps.caps.v2.host_feature_check_version >= 16
       };
 
       if (!(rs->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_TEXTURE_SHADOW_LOD) &&
@@ -927,15 +925,11 @@ static void virgl_clear_texture(struct pipe_context *ctx,
                                 const struct pipe_box *box,
                                 const void *data)
 {
-   struct virgl_screen *rs = virgl_screen(ctx->screen);
+   struct virgl_context *vctx = virgl_context(ctx);
    struct virgl_resource *vres = virgl_resource(res);
 
-   if (rs->caps.caps.v2.capability_bits & VIRGL_CAP_CLEAR_TEXTURE) {
-      struct virgl_context *vctx = virgl_context(ctx);
-      virgl_encode_clear_texture(vctx, vres, level, box, data);
-   } else {
-      u_default_clear_texture(ctx, res, level, box, data);
-   }
+   virgl_encode_clear_texture(vctx, vres, level, box, data);
+
    /* Mark as dirty, since we are updating the host side resource
     * without going through the corresponding guest side resource, and
     * hence the two will diverge.

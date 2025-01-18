@@ -242,10 +242,7 @@ vn_ring_submit(struct vn_ring *ring,
 {
    /* write cs to the ring */
    assert(!vn_cs_encoder_is_empty(cs));
-
-   /* avoid -Wmaybe-unitialized */
-   uint32_t cur_seqno = 0;
-
+   uint32_t cur_seqno;
    for (uint32_t i = 0; i < cs->buffer_count; i++) {
       const struct vn_cs_encoder_buffer *buf = &cs->buffers[i];
       cur_seqno = vn_ring_wait_space(ring, buf->committed_size);

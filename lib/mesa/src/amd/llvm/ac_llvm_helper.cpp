@@ -250,11 +250,7 @@ struct ac_compiler_passes *ac_create_llvm_passes(LLVMTargetMachineRef tm)
    TargetMachine *TM = reinterpret_cast<TargetMachine *>(tm);
 
    if (TM->addPassesToEmitFile(p->passmgr, p->ostream, nullptr,
-#if LLVM_VERSION_MAJOR >= 18
-                               CodeGenFileType::ObjectFile)) {
-#else
                                CGFT_ObjectFile)) {
-#endif
       fprintf(stderr, "amd: TargetMachine can't emit a file of this type!\n");
       delete p;
       return NULL;
@@ -299,11 +295,16 @@ LLVMPassManagerRef ac_create_passmgr(LLVMTargetLibraryInfoRef target_library_inf
     */
    unwrap(passmgr)->add(createBarrierNoopPass());
 
+   /* This pass eliminates all loads and stores on alloca'd pointers. */
+   unwrap(passmgr)->add(createPromoteMemoryToRegisterPass());
    #if LLVM_VERSION_MAJOR >= 16
    unwrap(passmgr)->add(createSROAPass(true));
    #else
    unwrap(passmgr)->add(createSROAPass());
    #endif
+   /* TODO: restore IPSCCP */
+   if (LLVM_VERSION_MAJOR >= 16)
+      unwrap(passmgr)->add(createLoopSinkPass());
    /* TODO: restore IPSCCP */
    unwrap(passmgr)->add(createLICMPass());
    unwrap(passmgr)->add(createCFGSimplificationPass());

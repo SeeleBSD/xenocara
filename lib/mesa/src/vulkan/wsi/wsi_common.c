@@ -240,11 +240,6 @@ wsi_device_init(struct wsi_device *wsi,
          wsi->force_bgra8_unorm_first =
             driQueryOptionb(dri_options, "vk_wsi_force_bgra8_unorm_first");
       }
-
-      if (driCheckOption(dri_options, "vk_wsi_force_swapchain_to_current_extent",  DRI_BOOL)) {
-         wsi->force_swapchain_to_currentExtent =
-            driQueryOptionb(dri_options, "vk_wsi_force_swapchain_to_current_extent");
-      }
    }
 
    return VK_SUCCESS;
@@ -928,22 +923,12 @@ wsi_CreateSwapchainKHR(VkDevice _device,
    else
      alloc = &device->alloc;
 
-   VkSwapchainCreateInfoKHR info = *pCreateInfo;
-
-   if (wsi_device->force_swapchain_to_currentExtent) {
-      VkSurfaceCapabilities2KHR caps2 = {
-         .sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR,
-      };
-      iface->get_capabilities2(surface, wsi_device, NULL, &caps2);
-      info.imageExtent = caps2.surfaceCapabilities.currentExtent;
-   }
-
    /* Ignore DEFERRED_MEMORY_ALLOCATION_BIT. Would require deep plumbing to be able to take advantage of it.
     * bool deferred_allocation = pCreateInfo->flags & VK_SWAPCHAIN_CREATE_DEFERRED_MEMORY_ALLOCATION_BIT_EXT;
     */
 
    VkResult result = iface->create_swapchain(surface, _device, wsi_device,
-                                             &info, alloc,
+                                             pCreateInfo, alloc,
                                              &swapchain);
    if (result != VK_SUCCESS)
       return result;
@@ -1947,18 +1932,17 @@ wsi_configure_buffer_image(UNUSED const struct wsi_swapchain *chain,
 
    const uint32_t cpp = vk_format_get_blocksize(pCreateInfo->imageFormat);
    info->linear_stride = pCreateInfo->imageExtent.width * cpp;
-   info->linear_stride = align(info->linear_stride, stride_align);
+   info->linear_stride = ALIGN_POT(info->linear_stride, stride_align);
 
    /* Since we can pick the stride to be whatever we want, also align to the
     * device's optimalBufferCopyRowPitchAlignment so we get efficient copies.
     */
    assert(wsi->optimalBufferCopyRowPitchAlignment > 0);
-   info->linear_stride = align(info->linear_stride,
-                               wsi->optimalBufferCopyRowPitchAlignment);
+   info->linear_stride = ALIGN_POT(info->linear_stride,
+                                   wsi->optimalBufferCopyRowPitchAlignment);
 
-   info->linear_size = (uint64_t)info->linear_stride *
-                       pCreateInfo->imageExtent.height;
-   info->linear_size = align64(info->linear_size, size_align);
+   info->linear_size = info->linear_stride * pCreateInfo->imageExtent.height;
+   info->linear_size = ALIGN_POT(info->linear_size, size_align);
 
    info->finish_create = wsi_finish_create_blit_context;
 }

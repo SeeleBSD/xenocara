@@ -486,8 +486,6 @@ class Parser(object):
                 self.prefix = None
         elif name == "value":
             self.values.append(Value(attrs))
-        elif name in ("import", "exclude"):
-            pass
         else:
             assert False
 
@@ -514,7 +512,7 @@ class Parser(object):
         elif name  == "enum":
             self.emit_enum()
             self.enum = None
-        elif name in ("import", "exclude", "value"):
+        elif name  == "value":
             pass
         else:
             assert False
@@ -643,7 +641,6 @@ def main():
 
     genxml = intel_genxml.GenXml(pargs.xml_source)
     genxml.filter_engines(engines)
-    genxml.merge_imported()
     p = Parser()
     p.emit_genxml(genxml)
 

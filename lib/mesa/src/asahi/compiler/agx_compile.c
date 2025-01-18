@@ -443,17 +443,6 @@ agx_emit_store_vary(agx_builder *b, nir_intrinsic_instr *instr)
    assert(nir_src_is_const(*offset) && "todo: indirects");
 
    unsigned imm_index = b->shader->out->varyings.vs.slots[sem.location];
-
-   if (sem.location == VARYING_SLOT_LAYER) {
-      /* Separate slots used for the sysval vs the varying. The default slot
-       * above is for the varying. Change for the sysval.
-       */
-      assert(sem.no_sysval_output || sem.no_varying);
-
-      if (sem.no_varying)
-         imm_index = b->shader->out->varyings.vs.layer_viewport_slot;
-   }
-
    assert(imm_index < ~0);
    imm_index += (nir_src_as_uint(*offset) * 4) + nir_intrinsic_component(instr);
 
@@ -646,33 +635,14 @@ agx_emit_block_image_store(agx_builder *b, nir_intrinsic_instr *instr)
 {
    unsigned image = nir_src_as_uint(instr->src[0]);
    agx_index offset = agx_src_index(&instr->src[1]);
-   agx_index layer = agx_src_index(&instr->src[2]);
    enum agx_format format = agx_format_for_pipe(nir_intrinsic_format(instr));
-
-   bool ms = nir_intrinsic_image_dim(instr) == GLSL_SAMPLER_DIM_MS;
-   bool array = nir_intrinsic_image_array(instr);
-   enum agx_dim dim = agx_tex_dim(nir_intrinsic_image_dim(instr), array);
-
-   /* Modified coordinate descriptor */
-   agx_index coords;
-   if (array) {
-      coords = agx_temp(b->shader, AGX_SIZE_32);
-      agx_emit_collect_to(
-         b, coords, 2,
-         (agx_index[]){
-            ms ? agx_mov_imm(b, 16, 0) : layer,
-            ms ? layer : agx_mov_imm(b, 16, 0xFFFF) /* TODO: Why can't zero? */,
-         });
-   } else {
-      coords = agx_null();
-   }
+   enum agx_dim dim = agx_tex_dim(nir_intrinsic_image_dim(instr), false);
 
    // XXX: how does this possibly work
    if (format == AGX_FORMAT_F16)
       format = AGX_FORMAT_I16;
 
-   return agx_block_image_store(b, agx_immediate(image), offset, coords, format,
-                                dim);
+   return agx_block_image_store(b, agx_immediate(image), offset, format, dim);
 }
 
 static agx_instr *
@@ -1075,9 +1045,9 @@ agx_emit_intrinsic(agx_builder *b, nir_intrinsic_instr *instr)
       /* Compare special register to zero. We could lower this in NIR (letting
        * us fold in an inot) but meh?
        */
-      return agx_icmp_to(b, dst,
-                         agx_get_sr_coverage(b, 32, AGX_SR_IS_ACTIVE_THREAD),
-                         agx_zero(), AGX_ICOND_UEQ, false);
+      return agx_icmpsel_to(
+         b, dst, agx_get_sr_coverage(b, 32, AGX_SR_IS_ACTIVE_THREAD),
+         agx_zero(), agx_immediate(1), agx_zero(), AGX_ICOND_UEQ);
 
    case nir_intrinsic_load_vertex_id:
       assert(b->shader->stage == MESA_SHADER_VERTEX);
@@ -1342,26 +1312,26 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
       BINOP(interleave_agx, intl);
 
    case nir_op_feq:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_EQ, false);
+      return agx_fcmpsel_to(b, dst, s0, s1, i1, i0, AGX_FCOND_EQ);
    case nir_op_flt:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_LT, false);
+      return agx_fcmpsel_to(b, dst, s0, s1, i1, i0, AGX_FCOND_LT);
    case nir_op_fge:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_GE, false);
+      return agx_fcmpsel_to(b, dst, s0, s1, i1, i0, AGX_FCOND_GE);
    case nir_op_fneu:
-      return agx_fcmp_to(b, dst, s0, s1, AGX_FCOND_EQ, true);
+      return agx_fcmpsel_to(b, dst, s0, s1, i0, i1, AGX_FCOND_EQ);
 
    case nir_op_ieq:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, false);
+      return agx_icmpsel_to(b, dst, s0, s1, i1, i0, AGX_ICOND_UEQ);
    case nir_op_ine:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_UEQ, true);
+      return agx_icmpsel_to(b, dst, s0, s1, i0, i1, AGX_ICOND_UEQ);
    case nir_op_ilt:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_SLT, false);
+      return agx_icmpsel_to(b, dst, s0, s1, i1, i0, AGX_ICOND_SLT);
    case nir_op_ige:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_SLT, true);
+      return agx_icmpsel_to(b, dst, s0, s1, i0, i1, AGX_ICOND_SLT);
    case nir_op_ult:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_ULT, false);
+      return agx_icmpsel_to(b, dst, s0, s1, i1, i0, AGX_ICOND_ULT);
    case nir_op_uge:
-      return agx_icmp_to(b, dst, s0, s1, AGX_ICOND_ULT, true);
+      return agx_icmpsel_to(b, dst, s0, s1, i0, i1, AGX_ICOND_ULT);
 
    case nir_op_inot:
       if (sz == 1)
@@ -1370,7 +1340,7 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
          return agx_not_to(b, dst, s0);
 
    case nir_op_b2b1:
-      return agx_icmp_to(b, dst, s0, i0, AGX_ICOND_UEQ, true);
+      return agx_icmpsel_to(b, dst, s0, i0, i0, i1, AGX_ICOND_UEQ);
 
    case nir_op_fsqrt:
       return agx_fmul_to(b, dst, s0, agx_srsqrt(b, s0));
@@ -1379,16 +1349,10 @@ agx_emit_alu(agx_builder *b, nir_alu_instr *instr)
    case nir_op_fneg:
       return agx_fmov_to(b, dst, agx_neg(s0));
 
-   case nir_op_fmin: {
-      agx_index tmp = agx_fcmpsel(b, s0, s1, s0, s1, AGX_FCOND_LTN);
-      /* flush denorms */
-      return agx_fadd_to(b, dst, tmp, agx_negzero());
-   }
-   case nir_op_fmax: {
-      agx_index tmp = agx_fcmpsel(b, s0, s1, s0, s1, AGX_FCOND_GTN);
-      /* flush denorms */
-      return agx_fadd_to(b, dst, tmp, agx_negzero());
-   }
+   case nir_op_fmin:
+      return agx_fcmpsel_to(b, dst, s0, s1, s0, s1, AGX_FCOND_LTN);
+   case nir_op_fmax:
+      return agx_fcmpsel_to(b, dst, s0, s1, s0, s1, AGX_FCOND_GTN);
    case nir_op_imin:
       return agx_icmpsel_to(b, dst, s0, s1, s0, s1, AGX_ICOND_SLT);
    case nir_op_imax:
@@ -1755,39 +1719,17 @@ agx_emit_tex(agx_builder *b, nir_tex_instr *instr)
 }
 
 /*
- * Determine if a NIR loop (CF list) uses a continue jump, including within
- * if-else statements but not including nested loops.
+ * Mark the logical end of the current block by emitting a p_logical_end marker.
+ * Note if an unconditional jump is emitted (for instance, to break out of a
+ * loop from inside an if), the block has already reached its logical end so we
+ * don't re-emit p_logical_end. The validator checks this, and correct register
+ * allocation depends on it.
  */
-static bool
-cf_list_uses_continue(struct exec_list *list)
+static void
+agx_emit_logical_end(agx_builder *b)
 {
-   foreach_list_typed(nir_cf_node, node, node, list) {
-      if (node->type == nir_cf_node_block) {
-         nir_block *block = nir_cf_node_as_block(node);
-
-         nir_foreach_instr(instr, block) {
-            if (instr->type == nir_instr_type_jump &&
-                nir_instr_as_jump(instr)->type == nir_jump_continue)
-               return true;
-         }
-      } else if (node->type == nir_cf_node_if) {
-         nir_if *nif = nir_cf_node_as_if(node);
-
-         if (cf_list_uses_continue(&nif->then_list) ||
-             cf_list_uses_continue(&nif->else_list))
-            return true;
-      } else {
-         assert(node->type == nir_cf_node_loop && "don't care about nesting");
-      }
-   }
-
-   return false;
-}
-
-static bool
-loop_uses_continue(nir_loop *loop)
-{
-   return cf_list_uses_continue(&loop->body);
+   if (!b->shader->current_block->unconditional_jumps)
+      agx_logical_end(b);
 }
 
 /*
@@ -1820,11 +1762,17 @@ agx_emit_jump(agx_builder *b, nir_jump_instr *instr)
       nestings += 1;
       agx_block_add_successor(ctx->current_block, ctx->continue_block);
    } else if (instr->type == nir_jump_break) {
-      nestings += ctx->loop_continues ? 2 : 1;
+      nestings += 2;
       agx_block_add_successor(ctx->current_block, ctx->break_block);
    }
 
-   agx_break(b, nestings, ctx->break_block);
+   /* Update the counter and flush */
+   agx_nest(b, nestings);
+
+   /* Jumps must come at the end of a block */
+   agx_emit_logical_end(b);
+   agx_pop_exec(b, 0);
+
    ctx->current_block->unconditional_jumps = true;
 }
 
@@ -1977,30 +1925,25 @@ emit_if(agx_context *ctx, nir_if *nif)
    agx_builder _b = agx_init_builder(ctx, agx_after_block(first_block));
    agx_index cond = agx_src_index(&nif->condition);
 
-   agx_instr *if_ = agx_if_icmp(&_b, cond, agx_zero(), 1, AGX_ICOND_UEQ, true,
-                                NULL /* filled in later */);
+   agx_emit_logical_end(&_b);
+   agx_if_icmp(&_b, cond, agx_zero(), 1, AGX_ICOND_UEQ, true);
    ctx->loop_nesting++;
-   ctx->total_nesting++;
 
    /* Emit the two subblocks. */
    agx_block *if_block = emit_cf_list(ctx, &nif->then_list);
    agx_block *end_then = ctx->current_block;
 
    _b.cursor = agx_after_block(ctx->current_block);
+   agx_emit_logical_end(&_b);
 
    agx_block *else_block = emit_cf_list(ctx, &nif->else_list);
    agx_block *end_else = ctx->current_block;
 
-   /* If the "if" fails, we fallthrough to the else */
-   if_->target = else_block;
-
    /* Insert an else instruction at the beginning of the else block. We use
     * "else_fcmp 0.0, 0.0, eq" as unconditional else, matching the blob.
-    *
-    * If it fails, we fall through to the logical end of the last else block.
     */
    _b.cursor = agx_before_block(else_block);
-   agx_else_fcmp(&_b, agx_zero(), agx_zero(), 1, AGX_FCOND_EQ, false, end_else);
+   agx_else_fcmp(&_b, agx_zero(), agx_zero(), 1, AGX_FCOND_EQ, false);
 
    ctx->after_block = agx_create_block(ctx);
 
@@ -2010,9 +1953,9 @@ emit_if(agx_context *ctx, nir_if *nif)
    agx_block_add_successor(end_else, ctx->after_block);
 
    _b.cursor = agx_after_block(ctx->current_block);
+   agx_emit_logical_end(&_b);
    agx_pop_exec(&_b, 1);
    ctx->loop_nesting--;
-   ctx->total_nesting--;
 }
 
 static void
@@ -2022,10 +1965,6 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
    /* We only track nesting within the innermost loop, so push and reset */
    unsigned pushed_nesting = ctx->loop_nesting;
    ctx->loop_nesting = 0;
-   ctx->total_nesting++;
-
-   bool old_continues = ctx->loop_continues;
-   ctx->loop_continues = loop_uses_continue(nloop);
 
    agx_block *popped_break = ctx->break_block;
    agx_block *popped_continue = ctx->continue_block;
@@ -2033,13 +1972,10 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
    ctx->break_block = agx_create_block(ctx);
    ctx->continue_block = agx_create_block(ctx);
 
-   /* If we are emitting a loop inside other control flow, there might be
-    * threads masked off (TODO: divergence analysis), so push_exec them so
-    * we get the lower nesting count values to ourselves.
-    */
+   /* Make room for break/continue nesting (TODO: skip if no divergent CF) */
    agx_builder _b = agx_init_builder(ctx, agx_after_block(ctx->current_block));
-   if (ctx->total_nesting > 1)
-      agx_push_exec(&_b, ctx->loop_continues ? 2 : 1);
+   agx_emit_logical_end(&_b);
+   agx_push_exec(&_b, 2);
 
    /* Fallthrough to body */
    agx_block_add_successor(ctx->current_block, ctx->continue_block);
@@ -2049,26 +1985,13 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
    ctx->after_block->loop_header = true;
    agx_block *start_block = emit_cf_list(ctx, &nloop->body);
 
-   /* If we used any continue jumps, we need to reactivate the continued
-    * threads. We do this with an always true while_icmp, which behaves like:
-    *
-    *    if (r0l == 1) {
-    *       r0l = 0;
-    *    }
-    *    update_exec
-    *
-    * If we did not use continue, this would be a no-op so it is omitted.
-    */
+   /* Fix up the nesting counter via an always true while_icmp, and branch back
+    * to start of loop if any lanes are active */
    _b.cursor = agx_after_block(ctx->current_block);
-
-   if (ctx->loop_continues) {
-      agx_while_icmp(
-         &_b, agx_zero(), agx_zero(), 2, AGX_ICOND_UEQ, false,
-         NULL /* no semantic target, used purely for side effects */);
-   }
-
+   agx_emit_logical_end(&_b);
+   agx_while_icmp(&_b, agx_zero(), agx_zero(), 2, AGX_ICOND_UEQ, false);
    agx_jmp_exec_any(&_b, start_block);
-   agx_pop_exec(&_b, ctx->loop_continues ? 2 : 1);
+   agx_pop_exec(&_b, 2);
    agx_block_add_successor(ctx->current_block, ctx->continue_block);
 
    /* Pop off */
@@ -2084,8 +2007,6 @@ emit_loop(agx_context *ctx, nir_loop *nloop)
 
    /* Restore loop nesting (we might be inside an if inside an outer loop) */
    ctx->loop_nesting = pushed_nesting;
-   ctx->total_nesting--;
-   ctx->loop_continues = old_continues;
 }
 
 /* Before the first control flow structure, the nesting counter needs to be
@@ -2100,7 +2021,7 @@ emit_first_cf(agx_context *ctx)
       return;
 
    agx_builder _b = agx_init_builder(ctx, agx_after_block(ctx->current_block));
-   agx_begin_cf(&_b);
+   agx_nest(&_b, 0);
    ctx->any_cf = true;
 }
 
@@ -2351,8 +2272,7 @@ agx_optimize_nir(nir_shader *nir, unsigned *preamble_size)
    /* Cleanup optimizations */
    nir_move_options move_all = nir_move_const_undef | nir_move_load_ubo |
                                nir_move_load_input | nir_move_comparisons |
-                               nir_move_copies | nir_move_load_ssbo |
-                               nir_move_alu;
+                               nir_move_copies | nir_move_load_ssbo;
 
    NIR_PASS_V(nir, nir_opt_sink, move_all);
    NIR_PASS_V(nir, nir_opt_move, move_all);
@@ -2376,9 +2296,6 @@ agx_remap_varyings_vs(nir_shader *nir, struct agx_varyings_vs *varyings,
     */
    varyings->slots[VARYING_SLOT_POS] = base;
    base += 4;
-
-   /* These are always flat-shaded from the FS perspective */
-   key->vs.outputs_flat_shaded |= VARYING_SLOT_LAYER | VARYING_SLOT_VIEWPORT;
 
    assert(!(key->vs.outputs_flat_shaded & key->vs.outputs_linear_shaded));
 
@@ -2424,11 +2341,6 @@ agx_remap_varyings_vs(nir_shader *nir, struct agx_varyings_vs *varyings,
 
    if (nir->info.outputs_written & VARYING_BIT_PSIZ) {
       varyings->slots[VARYING_SLOT_PSIZ] = base;
-      base += 1;
-   }
-
-   if (nir->info.outputs_written & VARYING_BIT_LAYER) {
-      varyings->layer_viewport_slot = base;
       base += 1;
    }
 
@@ -2614,6 +2526,7 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
     */
    agx_block *last_block = list_last_entry(&ctx->blocks, agx_block, link);
    agx_builder _b = agx_init_builder(ctx, agx_after_block(last_block));
+   agx_logical_end(&_b);
    agx_stop(&_b);
 
    /* Index blocks now that we're done emitting so the order is consistent */
@@ -2662,11 +2575,9 @@ agx_compile_function_nir(nir_shader *nir, nir_function_impl *impl,
    if (ctx->stage == MESA_SHADER_VERTEX && !impl->function->is_preamble)
       agx_set_st_vary_final(ctx);
 
+   agx_lower_pseudo(ctx);
    agx_insert_waits(ctx);
    agx_opt_empty_else(ctx);
-   agx_opt_break_if(ctx);
-   agx_opt_jmp_none(ctx);
-   agx_lower_pseudo(ctx);
 
    if (agx_should_dump(nir, AGX_DBG_SHADERS))
       agx_print_shader(ctx, stdout);
@@ -2779,11 +2690,6 @@ agx_preprocess_nir(nir_shader *nir, bool support_lod_bias, bool allow_mediump,
    NIR_PASS_V(nir, nir_opt_dce);
    NIR_PASS_V(nir, agx_nir_lower_texture, support_lod_bias);
 
-   /* Runs before we lower away idiv, to work at all. But runs after lowering
-    * textures, since the cube map array lowering generates division by 6.
-    */
-   NIR_PASS_V(nir, nir_opt_idiv_const, 16);
-
    nir_lower_idiv_options idiv_options = {
       .allow_fp16 = true,
    };
@@ -2866,10 +2772,8 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    /* Varying output is scalar, other I/O is vector. Lowered late because
     * transform feedback programs will use vector output.
     */
-   if (nir->info.stage == MESA_SHADER_VERTEX) {
+   if (nir->info.stage == MESA_SHADER_VERTEX)
       NIR_PASS_V(nir, nir_lower_io_to_scalar, nir_var_shader_out, NULL, NULL);
-      NIR_PASS_V(nir, agx_nir_lower_layer);
-   }
 
    out->push_count = key->reserved_preamble;
    agx_optimize_nir(nir, &out->push_count);
@@ -2920,10 +2824,6 @@ agx_compile_shader_nir(nir_shader *nir, struct agx_shader_key *key,
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       out->writes_psiz =
          nir->info.outputs_written & BITFIELD_BIT(VARYING_SLOT_PSIZ);
-
-      out->writes_layer_viewport =
-         nir->info.outputs_written & (VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT);
-
    } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       out->disable_tri_merging = nir->info.fs.needs_all_helper_invocations ||
                                  nir->info.fs.needs_quad_helper_invocations ||

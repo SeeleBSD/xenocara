@@ -45,7 +45,6 @@ lst_enum_include = [
     "pipe_texture_target",
     "pipe_shader_cap",
     "pipe_shader_ir",
-    "pipe_map_flags",
     "pipe_cap",
     "pipe_capf",
     "pipe_compute_cap",

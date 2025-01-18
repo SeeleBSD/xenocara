@@ -80,5 +80,4 @@ meson.add_install_script(
   libvdpau_gallium.full_path(),
   vdpau_drivers_path,
   vdpau_drivers,
-  install_tag : 'runtime',
 )

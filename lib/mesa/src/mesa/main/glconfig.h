@@ -26,6 +26,9 @@ struct gl_config
    /* ARB_multisample / SGIS_multisample */
    GLuint samples;
 
+   /* OML_swap_method */
+   GLint swapMethod;
+
    /* EXT_framebuffer_sRGB */
    GLint sRGBCapable;
 };

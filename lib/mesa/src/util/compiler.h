@@ -60,7 +60,7 @@
 #include <CoreFoundation/CFByteOrder.h>
 #define CPU_TO_LE32( x ) CFSwapInt32HostToLittle( x )
 #elif defined(__OpenBSD__)
-#include <endian.h>
+#include <sys/types.h>
 #define CPU_TO_LE32( x ) htole32( x )
 #else /*__linux__ */
 #include <sys/endian.h>

@@ -446,10 +446,6 @@ struct ir3_instruction {
          gl_system_value sysval;
       } input;
       struct {
-         unsigned src_base, src_size;
-         unsigned dst_base;
-      } push_consts;
-      struct {
          uint64_t value;
       } raw;
    };
@@ -2489,7 +2485,6 @@ INSTR1(QUAD_SHUFFLE_VERT)
 INSTR1(QUAD_SHUFFLE_DIAG)
 INSTR2NODST(LDC_K)
 INSTR2NODST(STC)
-INSTR2NODST(STSC)
 #ifndef GPU
 #elif GPU >= 600
 INSTR3NODST(STIB);
@@ -2541,7 +2536,6 @@ INSTR4(ATOMIC_S_XOR)
 /* cat7 instructions: */
 INSTR0(BAR)
 INSTR0(FENCE)
-INSTR0(CCINV)
 
 /* ************************************************************************* */
 #include "util/bitset.h"

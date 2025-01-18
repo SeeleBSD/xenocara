@@ -1,11 +1,7 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
-#include "nvk_pipeline.h"
 
+#include "nvk_private.h"
 #include "nvk_device.h"
-#include "nvk_entrypoints.h"
+#include "nvk_pipeline.h"
 
 #include "vk_pipeline_cache.h"
 
@@ -32,8 +28,14 @@ nvk_pipeline_free(struct nvk_device *dev,
                   struct nvk_pipeline *pipeline,
                   const VkAllocationCallbacks *pAllocator)
 {
-   for (uint32_t s = 0; s < ARRAY_SIZE(pipeline->shaders); s++)
-      nvk_shader_finish(dev, &pipeline->shaders[s]);
+   for (uint32_t s = 0; s < ARRAY_SIZE(pipeline->shaders); s++) {
+      if (pipeline->shaders[s].upload_size > 0) {
+         nvk_heap_free(dev, &dev->shader_heap,
+                       pipeline->shaders[s].upload_addr,
+                       pipeline->shaders[s].upload_size);
+      }
+      free(pipeline->shaders[s].xfb);
+   }
 
    vk_object_free(&dev->vk, pAllocator, pipeline);
 }

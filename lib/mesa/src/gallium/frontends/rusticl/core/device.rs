@@ -252,16 +252,6 @@ impl Device {
         for f in FORMATS {
             let mut fs = HashMap::new();
             for t in CL_IMAGE_TYPES {
-                // the CTS doesn't test them, so let's not advertize them by accident if they are
-                // broken
-                if t == CL_MEM_OBJECT_IMAGE1D_BUFFER
-                    && [CL_RGB, CL_RGBx].contains(&f.cl_image_format.image_channel_order)
-                    && ![CL_UNORM_SHORT_565, CL_UNORM_SHORT_555]
-                        .contains(&f.cl_image_format.image_channel_data_type)
-                {
-                    continue;
-                }
-
                 let mut flags: cl_uint = 0;
                 if self.screen.is_format_supported(
                     f.pipe,
@@ -659,7 +649,7 @@ impl Device {
             pipe_loader_device_type::NUM_PIPE_LOADER_DEVICE_TYPES => CL_DEVICE_TYPE_CUSTOM,
         };
 
-        if internal && res == CL_DEVICE_TYPE_GPU && self.screen.driver_name() != "zink" {
+        if internal && res == CL_DEVICE_TYPE_GPU {
             res |= CL_DEVICE_TYPE_DEFAULT;
         }
 
@@ -750,12 +740,8 @@ impl Device {
     }
 
     pub fn image_buffer_size(&self) -> usize {
-        min(
-            // the CTS requires it to not exceed `CL_MAX_MEM_ALLOC_SIZE`
-            self.max_mem_alloc(),
-            self.screen
-                .param(pipe_cap::PIPE_CAP_MAX_TEXEL_BUFFER_ELEMENTS_UINT) as cl_ulong,
-        ) as usize
+        self.screen
+            .param(pipe_cap::PIPE_CAP_MAX_TEXEL_BUFFER_ELEMENTS_UINT) as usize
     }
 
     pub fn image_read_count(&self) -> cl_uint {
@@ -856,7 +842,7 @@ impl Device {
     pub fn param_max_size(&self) -> usize {
         min(
             self.shader_param(pipe_shader_cap::PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE) as u32,
-            4 * 1024,
+            32 * 1024,
         ) as usize
     }
 

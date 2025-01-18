@@ -148,8 +148,8 @@ clc_lower_input_image_deref(nir_builder *b, struct clc_image_lower_context *cont
       nir_foreach_use_safe(src, &context->deref->def) {
          enum image_type type;
 
-         if (nir_src_parent_instr(src)->type == nir_instr_type_intrinsic) {
-            nir_intrinsic_instr *intrinsic = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+         if (src->parent_instr->type == nir_instr_type_intrinsic) {
+            nir_intrinsic_instr *intrinsic = nir_instr_as_intrinsic(src->parent_instr);
             nir_alu_type dest_type;
 
             b->cursor = nir_before_instr(&intrinsic->instr);
@@ -226,9 +226,9 @@ clc_lower_input_image_deref(nir_builder *b, struct clc_image_lower_context *cont
             default:
                unreachable("Unsupported image intrinsic");
             }
-         } else if (nir_src_parent_instr(src)->type == nir_instr_type_tex) {
+         } else if (src->parent_instr->type == nir_instr_type_tex) {
             assert(in_var->data.access & ACCESS_NON_WRITEABLE);
-            nir_tex_instr *tex = nir_instr_as_tex(nir_src_parent_instr(src));
+            nir_tex_instr *tex = nir_instr_as_tex(src->parent_instr);
 
             switch (nir_alu_type_get_base_type(tex->dest_type)) {
             case nir_type_float: type = FLOAT4; break;
@@ -360,7 +360,7 @@ clc_lower_nonnormalized_samplers(nir_shader *nir,
             int coords_idx = nir_tex_instr_src_index(tex, nir_tex_src_coord);
             assert(coords_idx != -1);
             nir_def *coords =
-               tex->src[coords_idx].src.ssa;
+               nir_ssa_for_src(&b, tex->src[coords_idx].src, tex->coord_components);
 
             nir_def *txs = nir_i2f32(&b, nir_get_texture_size(&b, tex));
 
@@ -700,7 +700,7 @@ clc_spirv_to_dxil(struct clc_libclc *lib,
    // according to the comment on nir_inline_functions
    NIR_PASS_V(nir, nir_lower_variable_initializers, nir_var_function_temp);
    NIR_PASS_V(nir, nir_lower_returns);
-   NIR_PASS_V(nir, nir_link_shader_functions, clc_libclc_get_clc_shader(lib));
+   NIR_PASS_V(nir, nir_lower_libclc, clc_libclc_get_clc_shader(lib));
    NIR_PASS_V(nir, nir_inline_functions);
 
    // Pick off the single entrypoint that we want.

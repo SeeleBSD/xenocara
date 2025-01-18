@@ -148,8 +148,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
                                                    &flush->batch);
       for (uint32_t i = 0; i < cmd_buffer_count; i++) {
          if (cmd_buffers[i]->usage_flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) {
-           intel_ds_queue_flush_data(&queue->ds, &cmd_buffers[i]->trace,
-                                     &flush->ds, false);
+            u_trace_flush(&cmd_buffers[i]->trace, flush, false);
          } else {
             u_trace_clone_append(u_trace_begin_iterator(&cmd_buffers[i]->trace),
                                  u_trace_end_iterator(&cmd_buffers[i]->trace),
@@ -160,7 +159,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
       }
       anv_genX(device->info, emit_so_memcpy_fini)(&flush->memcpy_state);
 
-      intel_ds_queue_flush_data(&queue->ds, &flush->ds.trace, &flush->ds, true);
+      u_trace_flush(&flush->ds.trace, flush, true);
 
       if (flush->batch.status != VK_SUCCESS) {
          result = flush->batch.status;
@@ -169,8 +168,7 @@ anv_device_utrace_flush_cmd_buffers(struct anv_queue *queue,
    } else {
       for (uint32_t i = 0; i < cmd_buffer_count; i++) {
          assert(cmd_buffers[i]->usage_flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-         intel_ds_queue_flush_data(&queue->ds, &cmd_buffers[i]->trace,
-                                   &flush->ds, i == (cmd_buffer_count - 1));
+         u_trace_flush(&cmd_buffers[i]->trace, flush, i == (cmd_buffer_count - 1));
       }
    }
 
@@ -273,7 +271,7 @@ anv_device_utrace_init(struct anv_device *device)
 {
    anv_bo_pool_init(&device->utrace_bo_pool, device, "utrace");
    intel_ds_device_init(&device->ds, device->info, device->fd,
-                        device->physical->local_minor,
+                        device->physical->local_minor - 128,
                         INTEL_DS_API_VULKAN);
    u_trace_context_init(&device->ds.trace_context,
                         &device->ds,
@@ -295,7 +293,7 @@ anv_device_utrace_init(struct anv_device *device)
 void
 anv_device_utrace_finish(struct anv_device *device)
 {
-   intel_ds_device_process(&device->ds, true);
+   u_trace_context_process(&device->ds.trace_context, true);
    intel_ds_device_fini(&device->ds);
    anv_bo_pool_finish(&device->utrace_bo_pool);
 }

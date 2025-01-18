@@ -25,7 +25,6 @@
 #include "ast.h"
 #include "compiler/glsl_types.h"
 #include "ir.h"
-#include "linker_util.h"
 #include "main/shader_types.h"
 #include "main/consts_exts.h"
 #include "main/shaderobj.h"
@@ -92,13 +91,13 @@ prototype_string(const glsl_type *return_type, const char *name,
    char *str = NULL;
 
    if (return_type != NULL)
-      str = ralloc_asprintf(NULL, "%s ", glsl_get_type_name(return_type));
+      str = ralloc_asprintf(NULL, "%s ", return_type->name);
 
    ralloc_asprintf_append(&str, "%s(", name);
 
    const char *comma = "";
    foreach_in_list(const ir_variable, param, parameters) {
-      ralloc_asprintf_append(&str, "%s%s", comma, glsl_get_type_name(param->type));
+      ralloc_asprintf_append(&str, "%s%s", comma, param->type->name);
       comma = ", ";
    }
 
@@ -742,7 +741,7 @@ match_subroutine_by_name(const char *name,
 
    for (int i = 0; i < state->num_subroutine_types; i++) {
       f = state->subroutine_types[i];
-      if (strcmp(f->name, glsl_get_type_name(var->type->without_array())))
+      if (strcmp(f->name, var->type->without_array()->name))
          continue;
       found = f;
       break;
@@ -1233,15 +1232,15 @@ process_vec_mat_constructor(exec_list *instructions,
          if (ir->type != constructor_type->column_type()) {
             _mesa_glsl_error(loc, state, "type error in matrix constructor: "
                              "expected: %s, found %s",
-                             glsl_get_type_name(constructor_type->column_type()),
-                             glsl_get_type_name(ir->type));
+                             constructor_type->column_type()->name,
+                             ir->type->name);
             return ir_rvalue::error_value(ctx);
          }
       } else if (ir->type != constructor_type->get_scalar_type()) {
          _mesa_glsl_error(loc, state, "type error in vector constructor: "
                           "expected: %s, found %s",
-                          glsl_get_type_name(constructor_type->get_scalar_type()),
-                          glsl_get_type_name(ir->type));
+                          constructor_type->get_scalar_type()->name,
+                          ir->type->name);
          return ir_rvalue::error_value(ctx);
       }
    }
@@ -1361,15 +1360,15 @@ process_array_constructor(exec_list *instructions,
          } else if (element_type != ir->type) {
             _mesa_glsl_error(loc, state, "type error in array constructor: "
                              "expected: %s, found %s",
-                             glsl_get_type_name(element_type),
-                             glsl_get_type_name(ir->type));
+                             element_type->name,
+                             ir->type->name);
             return ir_rvalue::error_value(ctx);
          }
       } else if (ir->type != constructor_type->fields.array) {
          _mesa_glsl_error(loc, state, "type error in array constructor: "
                           "expected: %s, found %s",
-                          glsl_get_type_name(constructor_type->fields.array),
-                          glsl_get_type_name(ir->type));
+                          constructor_type->fields.array->name,
+                          ir->type->name);
          return ir_rvalue::error_value(ctx);
       } else {
          element_type = ir->type;
@@ -1963,7 +1962,7 @@ process_record_constructor(exec_list *instructions,
                        "%s parameters in constructor for `%s'",
                        parameter_count > constructor_type->length
                        ? "too many": "insufficient",
-                       glsl_get_type_name(constructor_type));
+                       constructor_type->name);
       return ir_rvalue::error_value(ctx);
    }
 
@@ -1990,10 +1989,10 @@ process_record_constructor(exec_list *instructions,
          _mesa_glsl_error(loc, state,
                           "parameter type mismatch in constructor for `%s.%s' "
                           "(%s vs %s)",
-                          glsl_get_type_name(constructor_type),
+                          constructor_type->name,
                           struct_field->name,
-                          glsl_get_type_name(ir->type),
-                          glsl_get_type_name(struct_field->type));
+                          ir->type->name,
+                          struct_field->type->name);
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2141,14 +2140,14 @@ ast_function_expression::hir(exec_list *instructions,
           (!state->has_bindless() && constructor_type->contains_opaque())) {
          _mesa_glsl_error(& loc, state, "cannot construct %s type `%s'",
                           state->has_bindless() ? "atomic" : "opaque",
-                          glsl_get_type_name(constructor_type));
+                          constructor_type->name);
          return ir_rvalue::error_value(ctx);
       }
 
       if (constructor_type->is_subroutine()) {
          _mesa_glsl_error(& loc, state,
                           "subroutine name cannot be a constructor `%s'",
-                          glsl_get_type_name(constructor_type));
+                          constructor_type->name);
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2209,14 +2208,14 @@ ast_function_expression::hir(exec_list *instructions,
          if (components_used >= type_components) {
             _mesa_glsl_error(& loc, state, "too many parameters to `%s' "
                              "constructor",
-                             glsl_get_type_name(constructor_type));
+                             constructor_type->name);
             return ir_rvalue::error_value(ctx);
          }
 
          if (!is_valid_constructor(result->type, state)) {
             _mesa_glsl_error(& loc, state, "cannot construct `%s' from a "
                              "non-numeric data type",
-                             glsl_get_type_name(constructor_type));
+                             constructor_type->name);
             return ir_rvalue::error_value(ctx);
          }
 
@@ -2241,7 +2240,7 @@ ast_function_expression::hir(exec_list *instructions,
           && constructor_type->is_matrix()
           && !state->check_version(120, 100, &loc,
                                    "cannot construct `%s' from a matrix",
-                                   glsl_get_type_name(constructor_type))) {
+                                   constructor_type->name)) {
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2255,7 +2254,7 @@ ast_function_expression::hir(exec_list *instructions,
           && constructor_type->is_matrix()) {
          _mesa_glsl_error(& loc, state, "for matrix `%s' constructor, "
                           "matrix must be only parameter",
-                          glsl_get_type_name(constructor_type));
+                          constructor_type->name);
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2269,7 +2268,7 @@ ast_function_expression::hir(exec_list *instructions,
           && matrix_parameters == 0) {
          _mesa_glsl_error(& loc, state, "too few components to construct "
                           "`%s'",
-                          glsl_get_type_name(constructor_type));
+                          constructor_type->name);
          return ir_rvalue::error_value(ctx);
       }
 

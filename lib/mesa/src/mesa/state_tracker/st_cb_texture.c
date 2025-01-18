@@ -169,11 +169,6 @@ create_dst_texture(struct gl_context *ctx,
    struct pipe_screen *screen = st->screen;
    struct pipe_resource dst_templ;
 
-   if (pipe_target == PIPE_TEXTURE_CUBE || pipe_target == PIPE_TEXTURE_CUBE_ARRAY) {
-      width = MAX2(width, height);
-      height = MAX2(width, height);
-   }
-
    /* create the destination texture of size (width X height X depth) */
    memset(&dst_templ, 0, sizeof(dst_templ));
    dst_templ.target = pipe_target;
@@ -3345,11 +3340,8 @@ st_texture_create_from_memory(struct st_context *st,
    pt.bind = bind;
    /* only set this for OpenGL textures, not renderbuffers */
    pt.flags = PIPE_RESOURCE_FLAG_TEXTURING_MORE_LIKELY;
-   if (memObj->TextureTiling == GL_LINEAR_TILING_EXT) {
+   if (memObj->TextureTiling == GL_LINEAR_TILING_EXT)
       pt.bind |= PIPE_BIND_LINEAR;
-   } else if (memObj->TextureTiling == GL_CONST_BW_TILING_MESA) {
-      pt.bind |= PIPE_BIND_CONST_BW;
-   }
 
    pt.nr_samples = nr_samples;
    pt.nr_storage_samples = nr_samples;
@@ -3373,7 +3365,7 @@ st_texture_storage(struct gl_context *ctx,
                    GLsizei levels, GLsizei width,
                    GLsizei height, GLsizei depth,
                    struct gl_memory_object *memObj,
-                   GLuint64 offset, const char *func)
+                   GLuint64 offset)
 {
    const GLuint numFaces = _mesa_num_tex_faces(texObj->Target);
    struct gl_texture_image *texImage = texObj->Image[0][0];
@@ -3423,7 +3415,6 @@ st_texture_storage(struct gl_context *ctx,
       }
 
       if (!found) {
-         _mesa_error(st->ctx, GL_INVALID_OPERATION, "%s(format/samplecount not supported)", func);
          return GL_FALSE;
       }
    }
@@ -3460,10 +3451,8 @@ st_texture_storage(struct gl_context *ctx,
                                     texObj->IsSparse);
    }
 
-   if (!texObj->pt) {
-      _mesa_error(st->ctx, GL_OUT_OF_MEMORY, "%s", func);
+   if (!texObj->pt)
       return GL_FALSE;
-   }
 
    /* Set image resource pointers */
    for (level = 0; level < levels; level++) {
@@ -3496,12 +3485,11 @@ GLboolean
 st_AllocTextureStorage(struct gl_context *ctx,
                        struct gl_texture_object *texObj,
                        GLsizei levels, GLsizei width,
-                       GLsizei height, GLsizei depth,
-                       const char *func)
+                       GLsizei height, GLsizei depth)
 {
    return st_texture_storage(ctx, texObj, levels,
                              width, height, depth,
-                             NULL, 0, func);
+                             NULL, 0);
 }
 
 
@@ -3719,11 +3707,11 @@ st_SetTextureStorageForMemoryObject(struct gl_context *ctx,
                                     struct gl_memory_object *memObj,
                                     GLsizei levels, GLsizei width,
                                     GLsizei height, GLsizei depth,
-                                    GLuint64 offset, const char *func)
+                                    GLuint64 offset)
 {
    return st_texture_storage(ctx, texObj, levels,
                              width, height, depth,
-                             memObj, offset, func);
+                             memObj, offset);
 }
 
 GLboolean

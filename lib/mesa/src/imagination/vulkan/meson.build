@@ -58,6 +58,7 @@ pvr_files = files(
   'pvr_job_transfer.c',
   'pvr_pass.c',
   'pvr_pipeline.c',
+  'pvr_pipeline_cache.c',
   'pvr_transfer_frag_store.c',
   'pvr_query.c',
   'pvr_query_compute.c',
@@ -90,7 +91,6 @@ pvr_deps = [
 ]
 
 pvr_flags = [
-  imagination_c_args,
   no_override_init_args,
 ]
 
@@ -118,6 +118,7 @@ libvulkan_powervr_mesa = shared_library(
     inc_imagination,
     inc_include,
     inc_src,
+    inc_compiler,
   ],
   link_with : [
     libpowervr_common,
@@ -164,7 +165,6 @@ powervr_mesa_icd = custom_target(
   ],
   build_by_default : true,
   install_dir : with_vulkan_icd_dir,
-  install_tag : 'runtime',
   install : true,
 )
 

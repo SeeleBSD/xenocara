@@ -423,22 +423,6 @@ nir_find_state_variable(nir_shader *s,
    return NULL;
 }
 
-nir_variable *nir_find_sampler_variable_with_tex_index(nir_shader *shader,
-                                                       unsigned texture_index)
-{
-   nir_foreach_variable_with_modes(var, shader, nir_var_uniform) {
-      unsigned size =
-          glsl_type_is_array(var->type) ? glsl_array_size(var->type) : 1;
-      if ((glsl_type_is_texture(glsl_without_array(var->type)) ||
-           glsl_type_is_sampler(glsl_without_array(var->type))) &&
-          (var->data.binding == texture_index ||
-           (var->data.binding < texture_index &&
-            var->data.binding + size > texture_index)))
-         return var;
-   }
-   return NULL;
-}
-
 /* Annoyingly, qsort_r is not in the C standard library and, in particular, we
  * can't count on it on MSV and Android.  So we stuff the CMP function into
  * each array element.  It's a bit messy and burns more memory but the list of
@@ -501,16 +485,30 @@ nir_function_create(nir_shader *shader, const char *name)
    func->impl = NULL;
    func->is_entrypoint = false;
    func->is_preamble = false;
-   func->dont_inline = false;
-   func->should_inline = false;
 
    return func;
 }
 
-void
-nir_alu_src_copy(nir_alu_src *dest, const nir_alu_src *src)
+static void
+src_copy(nir_src *dest, const nir_src *src, gc_ctx *ctx)
 {
-   dest->src = nir_src_for_ssa(src->src.ssa);
+   dest->ssa = src->ssa;
+}
+
+/* NOTE: if the instruction you are copying a src to is already added
+ * to the IR, use nir_instr_rewrite_src() instead.
+ */
+void
+nir_src_copy(nir_src *dest, const nir_src *src, nir_instr *instr)
+{
+   src_copy(dest, src, instr ? gc_get_context(instr) : NULL);
+}
+
+void
+nir_alu_src_copy(nir_alu_src *dest, const nir_alu_src *src,
+                 nir_alu_instr *instr)
+{
+   nir_src_copy(&dest->src, &src->src, instr ? &instr->instr : NULL);
    for (unsigned i = 0; i < NIR_MAX_VEC_COMPONENTS; i++)
       dest->swizzle[i] = src->swizzle[i];
 }
@@ -1486,7 +1484,7 @@ nir_instr_clear_src(nir_instr *instr, nir_src *src)
 void
 nir_instr_move_src(nir_instr *dest_instr, nir_src *dest, nir_src *src)
 {
-   assert(!src_is_valid(dest) || nir_src_parent_instr(dest) == dest_instr);
+   assert(!src_is_valid(dest) || dest->parent_instr == dest_instr);
 
    src_remove_all_uses(dest);
    src_remove_all_uses(src);
@@ -1571,14 +1569,14 @@ nir_def_rewrite_uses_after(nir_def *def, nir_def *new_ssa,
       return;
 
    nir_foreach_use_including_if_safe(use_src, def) {
-      if (!nir_src_is_if(use_src)) {
-         assert(nir_src_parent_instr(use_src) != def->parent_instr);
+      if (!use_src->is_if) {
+         assert(use_src->parent_instr != def->parent_instr);
 
          /* Since def already dominates all of its uses, the only way a use can
           * not be dominated by after_me is if it is between def and after_me in
           * the instruction list.
           */
-         if (is_instr_between(def->parent_instr, after_me, nir_src_parent_instr(use_src)))
+         if (is_instr_between(def->parent_instr, after_me, use_src->parent_instr))
             continue;
       }
 
@@ -1602,16 +1600,16 @@ get_store_value(nir_intrinsic_instr *intrin)
 nir_component_mask_t
 nir_src_components_read(const nir_src *src)
 {
-   assert(nir_src_parent_instr(src));
+   assert(src->parent_instr);
 
-   if (nir_src_parent_instr(src)->type == nir_instr_type_alu) {
-      nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(src));
+   if (src->parent_instr->type == nir_instr_type_alu) {
+      nir_alu_instr *alu = nir_instr_as_alu(src->parent_instr);
       nir_alu_src *alu_src = exec_node_data(nir_alu_src, src, src);
       int src_idx = alu_src - &alu->src[0];
       assert(src_idx >= 0 && src_idx < nir_op_infos[alu->op].num_inputs);
       return nir_alu_instr_src_read_mask(alu, src_idx);
-   } else if (nir_src_parent_instr(src)->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+   } else if (src->parent_instr->type == nir_instr_type_intrinsic) {
+      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(src->parent_instr);
       if (nir_intrinsic_has_write_mask(intrin) && src->ssa == get_store_value(intrin))
          return nir_intrinsic_write_mask(intrin);
       else
@@ -1627,32 +1625,13 @@ nir_def_components_read(const nir_def *def)
    nir_component_mask_t read_mask = 0;
 
    nir_foreach_use_including_if(use, def) {
-      read_mask |= nir_src_is_if(use) ? 1 : nir_src_components_read(use);
+      read_mask |= use->is_if ? 1 : nir_src_components_read(use);
 
       if (read_mask == (1 << def->num_components) - 1)
          return read_mask;
    }
 
    return read_mask;
-}
-
-bool
-nir_def_all_uses_are_fsat(const nir_def *def)
-{
-   nir_foreach_use(src, def) {
-      if (nir_src_is_if(src))
-         return false;
-
-      nir_instr *use = nir_src_parent_instr(src);
-      if (use->type != nir_instr_type_alu)
-         return false;
-
-      nir_alu_instr *alu = nir_instr_as_alu(use);
-      if (alu->op != nir_op_fsat)
-         return false;
-   }
-
-   return true;
 }
 
 nir_block *
@@ -1838,17 +1817,6 @@ nir_cf_node_cf_tree_next(nir_cf_node *node)
       return NULL;
    else
       return nir_cf_node_as_block(nir_cf_node_next(node));
-}
-
-nir_block *
-nir_cf_node_cf_tree_prev(nir_cf_node *node)
-{
-   if (node->type == nir_cf_node_block)
-      return nir_block_cf_tree_prev(nir_cf_node_as_block(node));
-   else if (node->type == nir_cf_node_function)
-      return NULL;
-   else
-      return nir_cf_node_as_block(nir_cf_node_prev(node));
 }
 
 nir_if *
@@ -2774,7 +2742,6 @@ nir_get_nir_type_for_glsl_base_type(enum glsl_base_type base_type)
    case GLSL_TYPE_DOUBLE:  return nir_type_float64;
       /* clang-format on */
 
-   case GLSL_TYPE_COOPERATIVE_MATRIX:
    case GLSL_TYPE_SAMPLER:
    case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
@@ -2784,6 +2751,7 @@ nir_get_nir_type_for_glsl_base_type(enum glsl_base_type base_type)
    case GLSL_TYPE_ARRAY:
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_SUBROUTINE:
+   case GLSL_TYPE_FUNCTION:
    case GLSL_TYPE_ERROR:
       return nir_type_invalid;
    }
@@ -3085,10 +3053,6 @@ nir_tex_instr_result_size(const nir_tex_instr *instr)
       return instr->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 4 : 8;
 
    case nir_texop_sampler_descriptor_amd:
-      return 4;
-
-   case nir_texop_hdr_dim_nv:
-   case nir_texop_tex_type_nv:
       return 4;
 
    default:

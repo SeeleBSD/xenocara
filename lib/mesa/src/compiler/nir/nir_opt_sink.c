@@ -35,26 +35,6 @@
  * anscestor of consuming instructions.
  */
 
-/*
- * Detect whether a source is like a constant for the purposes of register
- * pressure calculations (e.g. can be remat anywhere effectively for free).
- */
-static bool
-is_constant_like(nir_src *src)
-{
-   /* Constants are constants */
-   if (nir_src_is_const(*src))
-      return true;
-
-   /* Otherwise, look for constant-like intrinsics */
-   nir_instr *parent = src->ssa->parent_instr;
-   if (parent->type != nir_instr_type_intrinsic)
-      return false;
-
-   return (nir_instr_as_intrinsic(parent)->intrinsic ==
-           nir_intrinsic_load_preamble);
-}
-
 bool
 nir_can_move_instr(nir_instr *instr, nir_move_options options)
 {
@@ -64,37 +44,12 @@ nir_can_move_instr(nir_instr *instr, nir_move_options options)
       return options & nir_move_const_undef;
    }
    case nir_instr_type_alu: {
-      nir_alu_instr *alu = nir_instr_as_alu(instr);
-
-      /* Derivatives cannot be moved into non-uniform control flow, including
-       * past a discard_if in the same block. Even if they could, sinking
-       * derivatives extends the lifetime of helper invocations which may be
-       * worse than the register pressure decrease. Bail on derivatives.
-       */
-      if (nir_op_is_derivative(alu->op))
-         return false;
-
-      if (nir_op_is_vec_or_mov(alu->op) || alu->op == nir_op_b2i32)
+      if (nir_op_is_vec_or_mov(nir_instr_as_alu(instr)->op) ||
+          nir_instr_as_alu(instr)->op == nir_op_b2i32)
          return options & nir_move_copies;
-      if (nir_alu_instr_is_comparison(alu))
+      if (nir_alu_instr_is_comparison(nir_instr_as_alu(instr)))
          return options & nir_move_comparisons;
-
-      /* Assuming that constants do not contribute to register pressure, it is
-       * beneficial to sink ALU instructions where all but one source is
-       * constant. Detect that case last.
-       */
-      if (!(options & nir_move_alu))
-         return false;
-
-      unsigned inputs = nir_op_infos[alu->op].num_inputs;
-      unsigned constant_inputs = 0;
-
-      for (unsigned i = 0; i < inputs; ++i) {
-         if (is_constant_like(&alu->src[i].src))
-            constant_inputs++;
-      }
-
-      return (constant_inputs + 1 >= inputs);
+      return false;
    }
    case nir_instr_type_intrinsic: {
       nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
@@ -107,15 +62,9 @@ nir_can_move_instr(nir_instr *instr, nir_move_options options)
       case nir_intrinsic_load_input:
       case nir_intrinsic_load_interpolated_input:
       case nir_intrinsic_load_per_vertex_input:
-      case nir_intrinsic_load_frag_coord:
-      case nir_intrinsic_load_frag_coord_zw:
-      case nir_intrinsic_load_pixel_coord:
          return options & nir_move_load_input;
       case nir_intrinsic_load_uniform:
          return options & nir_move_load_uniform;
-      case nir_intrinsic_load_constant_agx:
-      case nir_intrinsic_load_local_pixel_agx:
-         return true;
       default:
          return false;
       }
@@ -194,11 +143,11 @@ get_preferred_block(nir_def *def, bool sink_out_of_loops)
    nir_foreach_use_including_if(use, def) {
       nir_block *use_block;
 
-      if (nir_src_is_if(use)) {
+      if (use->is_if) {
          use_block =
-            nir_cf_node_as_block(nir_cf_node_prev(&nir_src_parent_if(use)->cf_node));
+            nir_cf_node_as_block(nir_cf_node_prev(&use->parent_if->cf_node));
       } else {
-         nir_instr *instr = nir_src_parent_instr(use);
+         nir_instr *instr = use->parent_instr;
          use_block = instr->block;
 
          /*

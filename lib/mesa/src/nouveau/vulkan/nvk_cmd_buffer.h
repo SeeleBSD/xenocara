@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #ifndef NVK_CMD_BUFFER_H
 #define NVK_CMD_BUFFER_H 1
 
@@ -23,11 +19,6 @@ struct nvk_cmd_pool;
 struct nvk_image_view;
 struct nvk_push_descriptor_set;
 
-struct nvk_sample_location {
-   uint8_t x_u4:4;
-   uint8_t y_u4:4;
-};
-
 /** Root descriptor table.  This gets pushed to the GPU directly */
 struct nvk_root_descriptor_table {
    uint64_t root_desc_addr;
@@ -38,7 +29,7 @@ struct nvk_root_descriptor_table {
          uint32_t base_instance;
          uint32_t draw_id;
          uint32_t view_index;
-         struct nvk_sample_location sample_locations[8];
+         uint32_t _pad[2];
       } draw;
       struct {
          uint32_t base_group[3];
@@ -113,9 +104,18 @@ struct nvk_compute_state {
 
 struct nvk_cmd_push {
    void *map;
+#if NVK_NEW_UAPI == 1
    uint64_t addr;
+#else
+   struct nouveau_ws_bo *bo;
+   uint64_t bo_offset;
+#endif
    uint32_t range;
    bool no_prefetch;
+};
+
+struct nvk_cmd_bo_ref {
+   struct nouveau_ws_bo *bo;
 };
 
 struct nvk_cmd_buffer {
@@ -151,6 +151,13 @@ struct nvk_cmd_buffer {
     * buffer to use as a pushbuf.
     */
    struct util_dynarray pushes;
+
+   /** Array of struct nvk_cmd_bo_ref
+    *
+    * This is for any internal allocations which we want to reference which
+    * aren't push buffers.
+    */
+   struct util_dynarray bo_refs;
 
    uint64_t tls_space_needed;
 };
@@ -195,6 +202,14 @@ nvk_cmd_buffer_push_indirect_buffer(struct nvk_cmd_buffer *cmd,
                                     struct nvk_buffer *buffer,
                                     uint64_t offset,
                                     uint64_t dw_count);
+
+static inline void
+nvk_cmd_buffer_ref_bo(struct nvk_cmd_buffer *cmd,
+                      struct nouveau_ws_bo *bo)
+{
+   struct nvk_cmd_bo_ref ref = { .bo = bo };
+   util_dynarray_append(&cmd->bo_refs, struct nvk_cmd_bo_ref, ref);
+}
 
 void nvk_cmd_buffer_begin_graphics(struct nvk_cmd_buffer *cmd,
                                    const VkCommandBufferBeginInfo *pBeginInfo);

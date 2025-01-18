@@ -773,6 +773,7 @@ init_fbconfig_for_chooser(struct glx_config * config,
    config->xRenderable = GLX_DONT_CARE;
    config->fbconfigID = (GLXFBConfigID) (GLX_DONT_CARE);
 
+   config->swapMethod = GLX_DONT_CARE;
    config->sRGBCapable = GLX_DONT_CARE;
 }
 
@@ -823,6 +824,7 @@ fbconfigs_compatible(const struct glx_config * const a,
    MATCH_DONT_CARE(visualRating);
    MATCH_DONT_CARE(xRenderable);
    MATCH_DONT_CARE(fbconfigID);
+   MATCH_DONT_CARE(swapMethod);
 
    MATCH_MINIMUM(rgbBits);
    MATCH_MINIMUM(numAuxBuffers);
@@ -1114,7 +1116,7 @@ glXChooseVisual(Display * dpy, int screen, int *attribList)
                                   &visualTemplate, &i);
 
          if (newList) {
-            XFree(visualList);
+            free(visualList);
             visualList = newList;
             best_config = config;
          }

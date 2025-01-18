@@ -270,312 +270,316 @@ load_sbt_entry(nir_builder *b, const struct rt_variables *vars, nir_def *idx, en
    nir_store_var(b, vars->shader_record_ptr, record_addr, 1);
 }
 
-struct radv_lower_rt_instruction_data {
-   struct rt_variables *vars;
-   bool apply_stack_ptr;
-};
-
-static bool
-radv_lower_rt_instruction(nir_builder *b, nir_instr *instr, void *_data)
-{
-   if (instr->type == nir_instr_type_jump) {
-      nir_jump_instr *jump = nir_instr_as_jump(instr);
-      if (jump->type == nir_jump_halt) {
-         jump->type = nir_jump_return;
-         return true;
-      }
-      return false;
-   } else if (instr->type != nir_instr_type_intrinsic) {
-      return false;
-   }
-
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-
-   struct radv_lower_rt_instruction_data *data = _data;
-   struct rt_variables *vars = data->vars;
-   bool apply_stack_ptr = data->apply_stack_ptr;
-
-   b->cursor = nir_before_instr(&intr->instr);
-
-   nir_def *ret = NULL;
-   switch (intr->intrinsic) {
-   case nir_intrinsic_rt_execute_callable: {
-      uint32_t size = align(nir_intrinsic_stack_size(intr), 16);
-      nir_def *ret_ptr = nir_load_resume_shader_address_amd(b, nir_intrinsic_call_idx(intr));
-      ret_ptr = nir_ior_imm(b, ret_ptr, radv_get_rt_priority(b->shader->info.stage));
-
-      nir_store_var(b, vars->stack_ptr, nir_iadd_imm_nuw(b, nir_load_var(b, vars->stack_ptr), size), 1);
-      nir_store_scratch(b, ret_ptr, nir_load_var(b, vars->stack_ptr), .align_mul = 16);
-
-      nir_store_var(b, vars->stack_ptr, nir_iadd_imm_nuw(b, nir_load_var(b, vars->stack_ptr), 16), 1);
-      load_sbt_entry(b, vars, intr->src[0].ssa, SBT_CALLABLE, SBT_RECURSIVE_PTR);
-
-      nir_store_var(b, vars->arg, nir_iadd_imm(b, intr->src[1].ssa, -size - 16), 1);
-
-      vars->stack_size = MAX2(vars->stack_size, size + 16);
-      break;
-   }
-   case nir_intrinsic_rt_trace_ray: {
-      uint32_t size = align(nir_intrinsic_stack_size(intr), 16);
-      nir_def *ret_ptr = nir_load_resume_shader_address_amd(b, nir_intrinsic_call_idx(intr));
-      ret_ptr = nir_ior_imm(b, ret_ptr, radv_get_rt_priority(b->shader->info.stage));
-
-      nir_store_var(b, vars->stack_ptr, nir_iadd_imm_nuw(b, nir_load_var(b, vars->stack_ptr), size), 1);
-      nir_store_scratch(b, ret_ptr, nir_load_var(b, vars->stack_ptr), .align_mul = 16);
-
-      nir_store_var(b, vars->stack_ptr, nir_iadd_imm_nuw(b, nir_load_var(b, vars->stack_ptr), 16), 1);
-
-      nir_store_var(b, vars->shader_addr, nir_load_var(b, vars->traversal_addr), 1);
-      nir_store_var(b, vars->arg, nir_iadd_imm(b, intr->src[10].ssa, -size - 16), 1);
-
-      vars->stack_size = MAX2(vars->stack_size, size + 16);
-
-      /* Per the SPIR-V extension spec we have to ignore some bits for some arguments. */
-      nir_store_var(b, vars->accel_struct, intr->src[0].ssa, 0x1);
-      nir_store_var(b, vars->cull_mask_and_flags, nir_ior(b, nir_ishl_imm(b, intr->src[2].ssa, 24), intr->src[1].ssa),
-                    0x1);
-      nir_store_var(b, vars->sbt_offset, nir_iand_imm(b, intr->src[3].ssa, 0xf), 0x1);
-      nir_store_var(b, vars->sbt_stride, nir_iand_imm(b, intr->src[4].ssa, 0xf), 0x1);
-      nir_store_var(b, vars->miss_index, nir_iand_imm(b, intr->src[5].ssa, 0xffff), 0x1);
-      nir_store_var(b, vars->origin, intr->src[6].ssa, 0x7);
-      nir_store_var(b, vars->tmin, intr->src[7].ssa, 0x1);
-      nir_store_var(b, vars->direction, intr->src[8].ssa, 0x7);
-      nir_store_var(b, vars->tmax, intr->src[9].ssa, 0x1);
-      break;
-   }
-   case nir_intrinsic_rt_resume: {
-      uint32_t size = align(nir_intrinsic_stack_size(intr), 16);
-
-      nir_store_var(b, vars->stack_ptr, nir_iadd_imm(b, nir_load_var(b, vars->stack_ptr), -size), 1);
-      break;
-   }
-   case nir_intrinsic_rt_return_amd: {
-      if (b->shader->info.stage == MESA_SHADER_RAYGEN) {
-         nir_terminate(b);
-         break;
-      }
-      insert_rt_return(b, vars);
-      break;
-   }
-   case nir_intrinsic_load_scratch: {
-      if (apply_stack_ptr)
-         nir_src_rewrite(&intr->src[0], nir_iadd_nuw(b, nir_load_var(b, vars->stack_ptr), intr->src[0].ssa));
-      return true;
-   }
-   case nir_intrinsic_store_scratch: {
-      if (apply_stack_ptr)
-         nir_src_rewrite(&intr->src[1], nir_iadd_nuw(b, nir_load_var(b, vars->stack_ptr), intr->src[1].ssa));
-      return true;
-   }
-   case nir_intrinsic_load_rt_arg_scratch_offset_amd: {
-      ret = nir_load_var(b, vars->arg);
-      break;
-   }
-   case nir_intrinsic_load_shader_record_ptr: {
-      ret = nir_load_var(b, vars->shader_record_ptr);
-      break;
-   }
-   case nir_intrinsic_load_ray_t_min: {
-      ret = nir_load_var(b, vars->tmin);
-      break;
-   }
-   case nir_intrinsic_load_ray_t_max: {
-      ret = nir_load_var(b, vars->tmax);
-      break;
-   }
-   case nir_intrinsic_load_ray_world_origin: {
-      ret = nir_load_var(b, vars->origin);
-      break;
-   }
-   case nir_intrinsic_load_ray_world_direction: {
-      ret = nir_load_var(b, vars->direction);
-      break;
-   }
-   case nir_intrinsic_load_ray_instance_custom_index: {
-      nir_def *instance_node_addr = nir_load_var(b, vars->instance_addr);
-      nir_def *custom_instance_and_mask = nir_build_load_global(
-         b, 1, 32,
-         nir_iadd_imm(b, instance_node_addr, offsetof(struct radv_bvh_instance_node, custom_instance_and_mask)));
-      ret = nir_iand_imm(b, custom_instance_and_mask, 0xFFFFFF);
-      break;
-   }
-   case nir_intrinsic_load_primitive_id: {
-      ret = nir_load_var(b, vars->primitive_id);
-      break;
-   }
-   case nir_intrinsic_load_ray_geometry_index: {
-      ret = nir_load_var(b, vars->geometry_id_and_flags);
-      ret = nir_iand_imm(b, ret, 0xFFFFFFF);
-      break;
-   }
-   case nir_intrinsic_load_instance_id: {
-      nir_def *instance_node_addr = nir_load_var(b, vars->instance_addr);
-      ret = nir_build_load_global(
-         b, 1, 32, nir_iadd_imm(b, instance_node_addr, offsetof(struct radv_bvh_instance_node, instance_id)));
-      break;
-   }
-   case nir_intrinsic_load_ray_flags: {
-      ret = nir_iand_imm(b, nir_load_var(b, vars->cull_mask_and_flags), 0xFFFFFF);
-      break;
-   }
-   case nir_intrinsic_load_ray_hit_kind: {
-      ret = nir_load_var(b, vars->hit_kind);
-      break;
-   }
-   case nir_intrinsic_load_ray_world_to_object: {
-      unsigned c = nir_intrinsic_column(intr);
-      nir_def *instance_node_addr = nir_load_var(b, vars->instance_addr);
-      nir_def *wto_matrix[3];
-      nir_build_wto_matrix_load(b, instance_node_addr, wto_matrix);
-
-      nir_def *vals[3];
-      for (unsigned i = 0; i < 3; ++i)
-         vals[i] = nir_channel(b, wto_matrix[i], c);
-
-      ret = nir_vec(b, vals, 3);
-      break;
-   }
-   case nir_intrinsic_load_ray_object_to_world: {
-      unsigned c = nir_intrinsic_column(intr);
-      nir_def *instance_node_addr = nir_load_var(b, vars->instance_addr);
-      nir_def *rows[3];
-      for (unsigned r = 0; r < 3; ++r)
-         rows[r] = nir_build_load_global(
-            b, 4, 32,
-            nir_iadd_imm(b, instance_node_addr, offsetof(struct radv_bvh_instance_node, otw_matrix) + r * 16));
-      ret = nir_vec3(b, nir_channel(b, rows[0], c), nir_channel(b, rows[1], c), nir_channel(b, rows[2], c));
-      break;
-   }
-   case nir_intrinsic_load_ray_object_origin: {
-      nir_def *instance_node_addr = nir_load_var(b, vars->instance_addr);
-      nir_def *wto_matrix[3];
-      nir_build_wto_matrix_load(b, instance_node_addr, wto_matrix);
-      ret = nir_build_vec3_mat_mult(b, nir_load_var(b, vars->origin), wto_matrix, true);
-      break;
-   }
-   case nir_intrinsic_load_ray_object_direction: {
-      nir_def *instance_node_addr = nir_load_var(b, vars->instance_addr);
-      nir_def *wto_matrix[3];
-      nir_build_wto_matrix_load(b, instance_node_addr, wto_matrix);
-      ret = nir_build_vec3_mat_mult(b, nir_load_var(b, vars->direction), wto_matrix, false);
-      break;
-   }
-   case nir_intrinsic_load_intersection_opaque_amd: {
-      ret = nir_load_var(b, vars->opaque);
-      break;
-   }
-   case nir_intrinsic_load_cull_mask: {
-      ret = nir_ushr_imm(b, nir_load_var(b, vars->cull_mask_and_flags), 24);
-      break;
-   }
-   case nir_intrinsic_ignore_ray_intersection: {
-      nir_store_var(b, vars->ahit_accept, nir_imm_false(b), 0x1);
-
-      /* The if is a workaround to avoid having to fix up control flow manually */
-      nir_push_if(b, nir_imm_true(b));
-      nir_jump(b, nir_jump_return);
-      nir_pop_if(b, NULL);
-      break;
-   }
-   case nir_intrinsic_terminate_ray: {
-      nir_store_var(b, vars->ahit_accept, nir_imm_true(b), 0x1);
-      nir_store_var(b, vars->ahit_terminate, nir_imm_true(b), 0x1);
-
-      /* The if is a workaround to avoid having to fix up control flow manually */
-      nir_push_if(b, nir_imm_true(b));
-      nir_jump(b, nir_jump_return);
-      nir_pop_if(b, NULL);
-      break;
-   }
-   case nir_intrinsic_report_ray_intersection: {
-      nir_push_if(b, nir_iand(b, nir_fge(b, nir_load_var(b, vars->tmax), intr->src[0].ssa),
-                              nir_fge(b, intr->src[0].ssa, nir_load_var(b, vars->tmin))));
-      {
-         nir_store_var(b, vars->ahit_accept, nir_imm_true(b), 0x1);
-         nir_store_var(b, vars->tmax, intr->src[0].ssa, 1);
-         nir_store_var(b, vars->hit_kind, intr->src[1].ssa, 1);
-      }
-      nir_pop_if(b, NULL);
-      break;
-   }
-   case nir_intrinsic_load_sbt_offset_amd: {
-      ret = nir_load_var(b, vars->sbt_offset);
-      break;
-   }
-   case nir_intrinsic_load_sbt_stride_amd: {
-      ret = nir_load_var(b, vars->sbt_stride);
-      break;
-   }
-   case nir_intrinsic_load_accel_struct_amd: {
-      ret = nir_load_var(b, vars->accel_struct);
-      break;
-   }
-   case nir_intrinsic_load_cull_mask_and_flags_amd: {
-      ret = nir_load_var(b, vars->cull_mask_and_flags);
-      break;
-   }
-   case nir_intrinsic_execute_closest_hit_amd: {
-      nir_store_var(b, vars->tmax, intr->src[1].ssa, 0x1);
-      nir_store_var(b, vars->primitive_id, intr->src[2].ssa, 0x1);
-      nir_store_var(b, vars->instance_addr, intr->src[3].ssa, 0x1);
-      nir_store_var(b, vars->geometry_id_and_flags, intr->src[4].ssa, 0x1);
-      nir_store_var(b, vars->hit_kind, intr->src[5].ssa, 0x1);
-      load_sbt_entry(b, vars, intr->src[0].ssa, SBT_HIT, SBT_RECURSIVE_PTR);
-
-      nir_def *should_return =
-         nir_test_mask(b, nir_load_var(b, vars->cull_mask_and_flags), SpvRayFlagsSkipClosestHitShaderKHRMask);
-
-      if (!(vars->flags & VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_CLOSEST_HIT_SHADERS_BIT_KHR)) {
-         should_return = nir_ior(b, should_return, nir_ieq_imm(b, nir_load_var(b, vars->shader_addr), 0));
-      }
-
-      /* should_return is set if we had a hit but we won't be calling the closest hit
-       * shader and hence need to return immediately to the calling shader. */
-      nir_push_if(b, should_return);
-      insert_rt_return(b, vars);
-      nir_pop_if(b, NULL);
-      break;
-   }
-   case nir_intrinsic_execute_miss_amd: {
-      nir_store_var(b, vars->tmax, intr->src[0].ssa, 0x1);
-      nir_def *undef = nir_undef(b, 1, 32);
-      nir_store_var(b, vars->primitive_id, undef, 0x1);
-      nir_store_var(b, vars->instance_addr, nir_undef(b, 1, 64), 0x1);
-      nir_store_var(b, vars->geometry_id_and_flags, undef, 0x1);
-      nir_store_var(b, vars->hit_kind, undef, 0x1);
-      nir_def *miss_index = nir_load_var(b, vars->miss_index);
-      load_sbt_entry(b, vars, miss_index, SBT_MISS, SBT_RECURSIVE_PTR);
-
-      if (!(vars->flags & VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_MISS_SHADERS_BIT_KHR)) {
-         /* In case of a NULL miss shader, do nothing and just return. */
-         nir_push_if(b, nir_ieq_imm(b, nir_load_var(b, vars->shader_addr), 0));
-         insert_rt_return(b, vars);
-         nir_pop_if(b, NULL);
-      }
-
-      break;
-   }
-   default:
-      return false;
-   }
-
-   if (ret)
-      nir_def_rewrite_uses(&intr->def, ret);
-   nir_instr_remove(&intr->instr);
-
-   return true;
-}
-
 /* This lowers all the RT instructions that we do not want to pass on to the combined shader and
  * that we can implement using the variables from the shader we are going to inline into. */
 static void
 lower_rt_instructions(nir_shader *shader, struct rt_variables *vars, bool apply_stack_ptr)
 {
-   struct radv_lower_rt_instruction_data data = {
-      .vars = vars,
-      .apply_stack_ptr = apply_stack_ptr,
-   };
-   nir_shader_instructions_pass(shader, radv_lower_rt_instruction, nir_metadata_none, &data);
+   nir_builder b_shader = nir_builder_create(nir_shader_get_entrypoint(shader));
+
+   nir_foreach_block (block, nir_shader_get_entrypoint(shader)) {
+      nir_foreach_instr_safe (instr, block) {
+         switch (instr->type) {
+         case nir_instr_type_intrinsic: {
+            b_shader.cursor = nir_before_instr(instr);
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            nir_def *ret = NULL;
+
+            switch (intr->intrinsic) {
+            case nir_intrinsic_rt_execute_callable: {
+               uint32_t size = align(nir_intrinsic_stack_size(intr), 16);
+               nir_def *ret_ptr = nir_load_resume_shader_address_amd(&b_shader, nir_intrinsic_call_idx(intr));
+               ret_ptr = nir_ior_imm(&b_shader, ret_ptr, radv_get_rt_priority(shader->info.stage));
+
+               nir_store_var(&b_shader, vars->stack_ptr,
+                             nir_iadd_imm_nuw(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), size), 1);
+               nir_store_scratch(&b_shader, ret_ptr, nir_load_var(&b_shader, vars->stack_ptr), .align_mul = 16);
+
+               nir_store_var(&b_shader, vars->stack_ptr,
+                             nir_iadd_imm_nuw(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), 16), 1);
+               load_sbt_entry(&b_shader, vars, intr->src[0].ssa, SBT_CALLABLE, SBT_RECURSIVE_PTR);
+
+               nir_store_var(&b_shader, vars->arg, nir_iadd_imm(&b_shader, intr->src[1].ssa, -size - 16), 1);
+
+               vars->stack_size = MAX2(vars->stack_size, size + 16);
+               break;
+            }
+            case nir_intrinsic_rt_trace_ray: {
+               uint32_t size = align(nir_intrinsic_stack_size(intr), 16);
+               nir_def *ret_ptr = nir_load_resume_shader_address_amd(&b_shader, nir_intrinsic_call_idx(intr));
+               ret_ptr = nir_ior_imm(&b_shader, ret_ptr, radv_get_rt_priority(shader->info.stage));
+
+               nir_store_var(&b_shader, vars->stack_ptr,
+                             nir_iadd_imm_nuw(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), size), 1);
+               nir_store_scratch(&b_shader, ret_ptr, nir_load_var(&b_shader, vars->stack_ptr), .align_mul = 16);
+
+               nir_store_var(&b_shader, vars->stack_ptr,
+                             nir_iadd_imm_nuw(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), 16), 1);
+
+               nir_store_var(&b_shader, vars->shader_addr, nir_load_var(&b_shader, vars->traversal_addr), 1);
+               nir_store_var(&b_shader, vars->arg, nir_iadd_imm(&b_shader, intr->src[10].ssa, -size - 16), 1);
+
+               vars->stack_size = MAX2(vars->stack_size, size + 16);
+
+               /* Per the SPIR-V extension spec we have to ignore some bits for some arguments. */
+               nir_store_var(&b_shader, vars->accel_struct, intr->src[0].ssa, 0x1);
+               nir_store_var(&b_shader, vars->cull_mask_and_flags,
+                             nir_ior(&b_shader, nir_ishl_imm(&b_shader, intr->src[2].ssa, 24), intr->src[1].ssa), 0x1);
+               nir_store_var(&b_shader, vars->sbt_offset, nir_iand_imm(&b_shader, intr->src[3].ssa, 0xf), 0x1);
+               nir_store_var(&b_shader, vars->sbt_stride, nir_iand_imm(&b_shader, intr->src[4].ssa, 0xf), 0x1);
+               nir_store_var(&b_shader, vars->miss_index, nir_iand_imm(&b_shader, intr->src[5].ssa, 0xffff), 0x1);
+               nir_store_var(&b_shader, vars->origin, intr->src[6].ssa, 0x7);
+               nir_store_var(&b_shader, vars->tmin, intr->src[7].ssa, 0x1);
+               nir_store_var(&b_shader, vars->direction, intr->src[8].ssa, 0x7);
+               nir_store_var(&b_shader, vars->tmax, intr->src[9].ssa, 0x1);
+               break;
+            }
+            case nir_intrinsic_rt_resume: {
+               uint32_t size = align(nir_intrinsic_stack_size(intr), 16);
+
+               nir_store_var(&b_shader, vars->stack_ptr,
+                             nir_iadd_imm(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), -size), 1);
+               break;
+            }
+            case nir_intrinsic_rt_return_amd: {
+               if (shader->info.stage == MESA_SHADER_RAYGEN) {
+                  nir_terminate(&b_shader);
+                  break;
+               }
+               insert_rt_return(&b_shader, vars);
+               break;
+            }
+            case nir_intrinsic_load_scratch: {
+               if (apply_stack_ptr)
+                  nir_src_rewrite(&intr->src[0],
+                                  nir_iadd_nuw(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), intr->src[0].ssa));
+               continue;
+            }
+            case nir_intrinsic_store_scratch: {
+               if (apply_stack_ptr)
+                  nir_src_rewrite(&intr->src[1],
+                                  nir_iadd_nuw(&b_shader, nir_load_var(&b_shader, vars->stack_ptr), intr->src[1].ssa));
+               continue;
+            }
+            case nir_intrinsic_load_rt_arg_scratch_offset_amd: {
+               ret = nir_load_var(&b_shader, vars->arg);
+               break;
+            }
+            case nir_intrinsic_load_shader_record_ptr: {
+               ret = nir_load_var(&b_shader, vars->shader_record_ptr);
+               break;
+            }
+            case nir_intrinsic_load_ray_t_min: {
+               ret = nir_load_var(&b_shader, vars->tmin);
+               break;
+            }
+            case nir_intrinsic_load_ray_t_max: {
+               ret = nir_load_var(&b_shader, vars->tmax);
+               break;
+            }
+            case nir_intrinsic_load_ray_world_origin: {
+               ret = nir_load_var(&b_shader, vars->origin);
+               break;
+            }
+            case nir_intrinsic_load_ray_world_direction: {
+               ret = nir_load_var(&b_shader, vars->direction);
+               break;
+            }
+            case nir_intrinsic_load_ray_instance_custom_index: {
+               nir_def *instance_node_addr = nir_load_var(&b_shader, vars->instance_addr);
+               nir_def *custom_instance_and_mask = nir_build_load_global(
+                  &b_shader, 1, 32,
+                  nir_iadd_imm(&b_shader, instance_node_addr,
+                               offsetof(struct radv_bvh_instance_node, custom_instance_and_mask)));
+               ret = nir_iand_imm(&b_shader, custom_instance_and_mask, 0xFFFFFF);
+               break;
+            }
+            case nir_intrinsic_load_primitive_id: {
+               ret = nir_load_var(&b_shader, vars->primitive_id);
+               break;
+            }
+            case nir_intrinsic_load_ray_geometry_index: {
+               ret = nir_load_var(&b_shader, vars->geometry_id_and_flags);
+               ret = nir_iand_imm(&b_shader, ret, 0xFFFFFFF);
+               break;
+            }
+            case nir_intrinsic_load_instance_id: {
+               nir_def *instance_node_addr = nir_load_var(&b_shader, vars->instance_addr);
+               ret = nir_build_load_global(
+                  &b_shader, 1, 32,
+                  nir_iadd_imm(&b_shader, instance_node_addr, offsetof(struct radv_bvh_instance_node, instance_id)));
+               break;
+            }
+            case nir_intrinsic_load_ray_flags: {
+               ret = nir_iand_imm(&b_shader, nir_load_var(&b_shader, vars->cull_mask_and_flags), 0xFFFFFF);
+               break;
+            }
+            case nir_intrinsic_load_ray_hit_kind: {
+               ret = nir_load_var(&b_shader, vars->hit_kind);
+               break;
+            }
+            case nir_intrinsic_load_ray_world_to_object: {
+               unsigned c = nir_intrinsic_column(intr);
+               nir_def *instance_node_addr = nir_load_var(&b_shader, vars->instance_addr);
+               nir_def *wto_matrix[3];
+               nir_build_wto_matrix_load(&b_shader, instance_node_addr, wto_matrix);
+
+               nir_def *vals[3];
+               for (unsigned i = 0; i < 3; ++i)
+                  vals[i] = nir_channel(&b_shader, wto_matrix[i], c);
+
+               ret = nir_vec(&b_shader, vals, 3);
+               break;
+            }
+            case nir_intrinsic_load_ray_object_to_world: {
+               unsigned c = nir_intrinsic_column(intr);
+               nir_def *instance_node_addr = nir_load_var(&b_shader, vars->instance_addr);
+               nir_def *rows[3];
+               for (unsigned r = 0; r < 3; ++r)
+                  rows[r] =
+                     nir_build_load_global(&b_shader, 4, 32,
+                                           nir_iadd_imm(&b_shader, instance_node_addr,
+                                                        offsetof(struct radv_bvh_instance_node, otw_matrix) + r * 16));
+               ret = nir_vec3(&b_shader, nir_channel(&b_shader, rows[0], c), nir_channel(&b_shader, rows[1], c),
+                              nir_channel(&b_shader, rows[2], c));
+               break;
+            }
+            case nir_intrinsic_load_ray_object_origin: {
+               nir_def *instance_node_addr = nir_load_var(&b_shader, vars->instance_addr);
+               nir_def *wto_matrix[3];
+               nir_build_wto_matrix_load(&b_shader, instance_node_addr, wto_matrix);
+               ret = nir_build_vec3_mat_mult(&b_shader, nir_load_var(&b_shader, vars->origin), wto_matrix, true);
+               break;
+            }
+            case nir_intrinsic_load_ray_object_direction: {
+               nir_def *instance_node_addr = nir_load_var(&b_shader, vars->instance_addr);
+               nir_def *wto_matrix[3];
+               nir_build_wto_matrix_load(&b_shader, instance_node_addr, wto_matrix);
+               ret = nir_build_vec3_mat_mult(&b_shader, nir_load_var(&b_shader, vars->direction), wto_matrix, false);
+               break;
+            }
+            case nir_intrinsic_load_intersection_opaque_amd: {
+               ret = nir_load_var(&b_shader, vars->opaque);
+               break;
+            }
+            case nir_intrinsic_load_cull_mask: {
+               ret = nir_ushr_imm(&b_shader, nir_load_var(&b_shader, vars->cull_mask_and_flags), 24);
+               break;
+            }
+            case nir_intrinsic_ignore_ray_intersection: {
+               nir_store_var(&b_shader, vars->ahit_accept, nir_imm_false(&b_shader), 0x1);
+
+               /* The if is a workaround to avoid having to fix up control flow manually */
+               nir_push_if(&b_shader, nir_imm_true(&b_shader));
+               nir_jump(&b_shader, nir_jump_return);
+               nir_pop_if(&b_shader, NULL);
+               break;
+            }
+            case nir_intrinsic_terminate_ray: {
+               nir_store_var(&b_shader, vars->ahit_accept, nir_imm_true(&b_shader), 0x1);
+               nir_store_var(&b_shader, vars->ahit_terminate, nir_imm_true(&b_shader), 0x1);
+
+               /* The if is a workaround to avoid having to fix up control flow manually */
+               nir_push_if(&b_shader, nir_imm_true(&b_shader));
+               nir_jump(&b_shader, nir_jump_return);
+               nir_pop_if(&b_shader, NULL);
+               break;
+            }
+            case nir_intrinsic_report_ray_intersection: {
+               nir_push_if(
+                  &b_shader,
+                  nir_iand(&b_shader, nir_fge(&b_shader, nir_load_var(&b_shader, vars->tmax), intr->src[0].ssa),
+                           nir_fge(&b_shader, intr->src[0].ssa, nir_load_var(&b_shader, vars->tmin))));
+               {
+                  nir_store_var(&b_shader, vars->ahit_accept, nir_imm_true(&b_shader), 0x1);
+                  nir_store_var(&b_shader, vars->tmax, intr->src[0].ssa, 1);
+                  nir_store_var(&b_shader, vars->hit_kind, intr->src[1].ssa, 1);
+               }
+               nir_pop_if(&b_shader, NULL);
+               break;
+            }
+            case nir_intrinsic_load_sbt_offset_amd: {
+               ret = nir_load_var(&b_shader, vars->sbt_offset);
+               break;
+            }
+            case nir_intrinsic_load_sbt_stride_amd: {
+               ret = nir_load_var(&b_shader, vars->sbt_stride);
+               break;
+            }
+            case nir_intrinsic_load_accel_struct_amd: {
+               ret = nir_load_var(&b_shader, vars->accel_struct);
+               break;
+            }
+            case nir_intrinsic_load_cull_mask_and_flags_amd: {
+               ret = nir_load_var(&b_shader, vars->cull_mask_and_flags);
+               break;
+            }
+            case nir_intrinsic_execute_closest_hit_amd: {
+               nir_store_var(&b_shader, vars->tmax, intr->src[1].ssa, 0x1);
+               nir_store_var(&b_shader, vars->primitive_id, intr->src[2].ssa, 0x1);
+               nir_store_var(&b_shader, vars->instance_addr, intr->src[3].ssa, 0x1);
+               nir_store_var(&b_shader, vars->geometry_id_and_flags, intr->src[4].ssa, 0x1);
+               nir_store_var(&b_shader, vars->hit_kind, intr->src[5].ssa, 0x1);
+               load_sbt_entry(&b_shader, vars, intr->src[0].ssa, SBT_HIT, SBT_RECURSIVE_PTR);
+
+               nir_def *should_return = nir_test_mask(&b_shader, nir_load_var(&b_shader, vars->cull_mask_and_flags),
+                                                      SpvRayFlagsSkipClosestHitShaderKHRMask);
+
+               if (!(vars->flags & VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_CLOSEST_HIT_SHADERS_BIT_KHR)) {
+                  should_return = nir_ior(&b_shader, should_return,
+                                          nir_ieq_imm(&b_shader, nir_load_var(&b_shader, vars->shader_addr), 0));
+               }
+
+               /* should_return is set if we had a hit but we won't be calling the closest hit
+                * shader and hence need to return immediately to the calling shader. */
+               nir_push_if(&b_shader, should_return);
+               insert_rt_return(&b_shader, vars);
+               nir_pop_if(&b_shader, NULL);
+               break;
+            }
+            case nir_intrinsic_execute_miss_amd: {
+               nir_store_var(&b_shader, vars->tmax, intr->src[0].ssa, 0x1);
+               nir_def *undef = nir_undef(&b_shader, 1, 32);
+               nir_store_var(&b_shader, vars->primitive_id, undef, 0x1);
+               nir_store_var(&b_shader, vars->instance_addr, nir_undef(&b_shader, 1, 64), 0x1);
+               nir_store_var(&b_shader, vars->geometry_id_and_flags, undef, 0x1);
+               nir_store_var(&b_shader, vars->hit_kind, undef, 0x1);
+               nir_def *miss_index = nir_load_var(&b_shader, vars->miss_index);
+               load_sbt_entry(&b_shader, vars, miss_index, SBT_MISS, SBT_RECURSIVE_PTR);
+
+               if (!(vars->flags & VK_PIPELINE_CREATE_2_RAY_TRACING_NO_NULL_MISS_SHADERS_BIT_KHR)) {
+                  /* In case of a NULL miss shader, do nothing and just return. */
+                  nir_push_if(&b_shader, nir_ieq_imm(&b_shader, nir_load_var(&b_shader, vars->shader_addr), 0));
+                  insert_rt_return(&b_shader, vars);
+                  nir_pop_if(&b_shader, NULL);
+               }
+
+               break;
+            }
+            default:
+               continue;
+            }
+
+            if (ret)
+               nir_def_rewrite_uses(&intr->def, ret);
+            nir_instr_remove(instr);
+            break;
+         }
+         case nir_instr_type_jump: {
+            nir_jump_instr *jump = nir_instr_as_jump(instr);
+            if (jump->type == nir_jump_halt) {
+               b_shader.cursor = nir_instr_remove(instr);
+               nir_jump(&b_shader, nir_jump_return);
+            }
+            break;
+         }
+         default:
+            break;
+         }
+      }
+   }
+
+   nir_metadata_preserve(nir_shader_get_entrypoint(shader), nir_metadata_none);
 }
 
 static bool
@@ -988,8 +992,8 @@ nir_lower_intersection_shader(nir_shader *intersection, nir_shader *any_hit)
             continue;
 
          b->cursor = nir_instr_remove(&intrin->instr);
-         nir_def *hit_t = intrin->src[0].ssa;
-         nir_def *hit_kind = intrin->src[1].ssa;
+         nir_def *hit_t = nir_ssa_for_src(b, intrin->src[0], 1);
+         nir_def *hit_kind = nir_ssa_for_src(b, intrin->src[1], 1);
          nir_def *min_t = nir_load_ray_t_min(b);
          nir_def *max_t = nir_load_ray_t_max(b);
 
@@ -1093,6 +1097,7 @@ struct traversal_data {
    nir_variable *barycentrics;
 
    struct radv_ray_tracing_pipeline *pipeline;
+   const struct radv_pipeline_key *key;
 };
 
 static void
@@ -1127,7 +1132,7 @@ visit_any_hit_shaders(struct radv_device *device, nir_builder *b, struct travers
       if (is_dup)
          continue;
 
-      nir_shader *nir_stage = radv_pipeline_cache_handle_to_nir(device, data->pipeline->stages[shader_id].nir);
+      nir_shader *nir_stage = radv_pipeline_cache_handle_to_nir(device, data->pipeline->stages[shader_id].shader);
       assert(nir_stage);
 
       insert_rt_case(b, nir_stage, vars, sbt_idx, data->pipeline->groups[i].handle.any_hit_index);
@@ -1257,12 +1262,13 @@ handle_candidate_aabb(nir_builder *b, struct radv_leaf_intersection *intersectio
       if (is_dup)
          continue;
 
-      nir_shader *nir_stage = radv_pipeline_cache_handle_to_nir(data->device, data->pipeline->stages[shader_id].nir);
+      nir_shader *nir_stage = radv_pipeline_cache_handle_to_nir(data->device, data->pipeline->stages[shader_id].shader);
       assert(nir_stage);
 
       nir_shader *any_hit_stage = NULL;
       if (any_hit_shader_id != VK_SHADER_UNUSED_KHR) {
-         any_hit_stage = radv_pipeline_cache_handle_to_nir(data->device, data->pipeline->stages[any_hit_shader_id].nir);
+         any_hit_stage =
+            radv_pipeline_cache_handle_to_nir(data->device, data->pipeline->stages[any_hit_shader_id].shader);
          assert(any_hit_stage);
 
          /* reserve stack size for any_hit before it is inlined */
@@ -1302,87 +1308,6 @@ handle_candidate_aabb(nir_builder *b, struct radv_leaf_intersection *intersectio
 }
 
 static void
-visit_closest_hit_shaders(struct radv_device *device, nir_builder *b, struct radv_ray_tracing_pipeline *pipeline,
-                          struct rt_variables *vars)
-{
-   nir_def *sbt_idx = nir_load_var(b, vars->idx);
-
-   if (!(vars->flags & VK_PIPELINE_CREATE_RAY_TRACING_NO_NULL_CLOSEST_HIT_SHADERS_BIT_KHR))
-      nir_push_if(b, nir_ine_imm(b, sbt_idx, 0));
-
-   for (unsigned i = 0; i < pipeline->group_count; ++i) {
-      struct radv_ray_tracing_group *group = &pipeline->groups[i];
-
-      unsigned shader_id = VK_SHADER_UNUSED_KHR;
-      if (group->type != VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR)
-         shader_id = group->recursive_shader;
-
-      if (shader_id == VK_SHADER_UNUSED_KHR)
-         continue;
-
-      /* Avoid emitting stages with the same shaders/handles multiple times. */
-      bool is_dup = false;
-      for (unsigned j = 0; j < i; ++j)
-         if (pipeline->groups[j].handle.closest_hit_index == pipeline->groups[i].handle.closest_hit_index)
-            is_dup = true;
-
-      if (is_dup)
-         continue;
-
-      nir_shader *nir_stage = radv_pipeline_cache_handle_to_nir(device, pipeline->stages[shader_id].nir);
-      assert(nir_stage);
-
-      insert_rt_case(b, nir_stage, vars, sbt_idx, pipeline->groups[i].handle.closest_hit_index);
-      ralloc_free(nir_stage);
-   }
-
-   if (!(vars->flags & VK_PIPELINE_CREATE_RAY_TRACING_NO_NULL_CLOSEST_HIT_SHADERS_BIT_KHR))
-      nir_pop_if(b, NULL);
-}
-
-static void
-visit_miss_shaders(struct radv_device *device, nir_builder *b, struct radv_ray_tracing_pipeline *pipeline,
-                   struct rt_variables *vars)
-{
-   nir_def *sbt_idx = nir_load_var(b, vars->idx);
-
-   if (!(vars->flags & VK_PIPELINE_CREATE_RAY_TRACING_NO_NULL_MISS_SHADERS_BIT_KHR))
-      nir_push_if(b, nir_ine_imm(b, sbt_idx, 0));
-
-   for (unsigned i = 0; i < pipeline->group_count; ++i) {
-      struct radv_ray_tracing_group *group = &pipeline->groups[i];
-
-      unsigned shader_id = VK_SHADER_UNUSED_KHR;
-      if (group->type == VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR)
-         shader_id = group->recursive_shader;
-
-      if (shader_id == VK_SHADER_UNUSED_KHR)
-         continue;
-
-      if (pipeline->stages[shader_id].stage != MESA_SHADER_MISS)
-         continue;
-
-      /* Avoid emitting stages with the same shaders/handles multiple times. */
-      bool is_dup = false;
-      for (unsigned j = 0; j < i; ++j)
-         if (pipeline->groups[j].handle.general_index == pipeline->groups[i].handle.general_index)
-            is_dup = true;
-
-      if (is_dup)
-         continue;
-
-      nir_shader *nir_stage = radv_pipeline_cache_handle_to_nir(device, pipeline->stages[shader_id].nir);
-      assert(nir_stage);
-
-      insert_rt_case(b, nir_stage, vars, sbt_idx, pipeline->groups[i].handle.general_index);
-      ralloc_free(nir_stage);
-   }
-
-   if (!(vars->flags & VK_PIPELINE_CREATE_RAY_TRACING_NO_NULL_MISS_SHADERS_BIT_KHR))
-      nir_pop_if(b, NULL);
-}
-
-static void
 store_stack_entry(nir_builder *b, nir_def *index, nir_def *value, const struct radv_ray_traversal_args *args)
 {
    nir_store_shared(b, value, index, .base = 0, .align_mul = 4);
@@ -1396,8 +1321,8 @@ load_stack_entry(nir_builder *b, nir_def *index, const struct radv_ray_traversal
 
 static void
 radv_build_traversal(struct radv_device *device, struct radv_ray_tracing_pipeline *pipeline,
-                     const VkRayTracingPipelineCreateInfoKHR *pCreateInfo, bool monolithic, nir_builder *b,
-                     struct rt_variables *vars, bool ignore_cull_mask)
+                     const VkRayTracingPipelineCreateInfoKHR *pCreateInfo, const struct radv_pipeline_key *key,
+                     nir_builder *b, struct rt_variables *vars)
 {
    nir_variable *barycentrics =
       nir_variable_create(b->shader, nir_var_ray_hit_attrib, glsl_vector_type(GLSL_TYPE_FLOAT, 2), "barycentrics");
@@ -1456,6 +1381,7 @@ radv_build_traversal(struct radv_device *device, struct radv_ray_tracing_pipelin
       .trav_vars = &trav_vars,
       .barycentrics = barycentrics,
       .pipeline = pipeline,
+      .key = key,
    };
 
    nir_def *cull_mask_and_flags = nir_load_var(b, vars->cull_mask_and_flags);
@@ -1470,7 +1396,6 @@ radv_build_traversal(struct radv_device *device, struct radv_ray_tracing_pipelin
       .stack_stride = device->physical_device->rt_wave_size * sizeof(uint32_t),
       .stack_entries = MAX_STACK_ENTRY_COUNT,
       .stack_base = 0,
-      .ignore_cull_mask = ignore_cull_mask,
       .stack_store_cb = store_stack_entry,
       .stack_load_cb = load_stack_entry,
       .aabb_cb = (pipeline->base.base.create_flags & VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_AABBS_BIT_KHR)
@@ -1490,54 +1415,32 @@ radv_build_traversal(struct radv_device *device, struct radv_ray_tracing_pipelin
    /* Register storage for hit attributes */
    nir_variable *hit_attribs[RADV_MAX_HIT_ATTRIB_SIZE / sizeof(uint32_t)];
 
-   if (!monolithic) {
-      for (uint32_t i = 0; i < ARRAY_SIZE(hit_attribs); i++)
-         hit_attribs[i] =
-            nir_local_variable_create(nir_shader_get_entrypoint(b->shader), glsl_uint_type(), "ahit_attrib");
+   for (uint32_t i = 0; i < ARRAY_SIZE(hit_attribs); i++)
+      hit_attribs[i] = nir_local_variable_create(nir_shader_get_entrypoint(b->shader), glsl_uint_type(), "ahit_attrib");
 
-      lower_hit_attribs(b->shader, hit_attribs, device->physical_device->rt_wave_size);
-   }
+   lower_hit_attribs(b->shader, hit_attribs, device->physical_device->rt_wave_size);
 
    /* Initialize follow-up shader. */
    nir_push_if(b, nir_load_var(b, trav_vars.hit));
    {
-      if (monolithic) {
-         load_sbt_entry(b, vars, nir_load_var(b, vars->idx), SBT_HIT, SBT_CLOSEST_HIT_IDX);
-
-         nir_def *should_return =
-            nir_test_mask(b, nir_load_var(b, vars->cull_mask_and_flags), SpvRayFlagsSkipClosestHitShaderKHRMask);
-
-         /* should_return is set if we had a hit but we won't be calling the closest hit
-          * shader and hence need to return immediately to the calling shader. */
-         nir_push_if(b, nir_inot(b, should_return));
-         visit_closest_hit_shaders(device, b, pipeline, vars);
-         nir_pop_if(b, NULL);
-      } else {
-         for (int i = 0; i < ARRAY_SIZE(hit_attribs); ++i)
-            nir_store_hit_attrib_amd(b, nir_load_var(b, hit_attribs[i]), .base = i);
-         nir_execute_closest_hit_amd(b, nir_load_var(b, vars->idx), nir_load_var(b, vars->tmax),
-                                     nir_load_var(b, vars->primitive_id), nir_load_var(b, vars->instance_addr),
-                                     nir_load_var(b, vars->geometry_id_and_flags), nir_load_var(b, vars->hit_kind));
-      }
+      for (int i = 0; i < ARRAY_SIZE(hit_attribs); ++i)
+         nir_store_hit_attrib_amd(b, nir_load_var(b, hit_attribs[i]), .base = i);
+      nir_execute_closest_hit_amd(b, nir_load_var(b, vars->idx), nir_load_var(b, vars->tmax),
+                                  nir_load_var(b, vars->primitive_id), nir_load_var(b, vars->instance_addr),
+                                  nir_load_var(b, vars->geometry_id_and_flags), nir_load_var(b, vars->hit_kind));
    }
    nir_push_else(b, NULL);
    {
-      if (monolithic) {
-         load_sbt_entry(b, vars, nir_load_var(b, vars->miss_index), SBT_MISS, SBT_GENERAL_IDX);
-
-         visit_miss_shaders(device, b, pipeline, vars);
-      } else {
-         /* Only load the miss shader if we actually miss. It is valid to not specify an SBT pointer
-          * for miss shaders if none of the rays miss. */
-         nir_execute_miss_amd(b, nir_load_var(b, vars->tmax));
-      }
+      /* Only load the miss shader if we actually miss. It is valid to not specify an SBT pointer
+       * for miss shaders if none of the rays miss. */
+      nir_execute_miss_amd(b, nir_load_var(b, vars->tmax));
    }
    nir_pop_if(b, NULL);
 }
 
 nir_shader *
 radv_build_traversal_shader(struct radv_device *device, struct radv_ray_tracing_pipeline *pipeline,
-                            const VkRayTracingPipelineCreateInfoKHR *pCreateInfo)
+                            const VkRayTracingPipelineCreateInfoKHR *pCreateInfo, const struct radv_pipeline_key *key)
 {
    const VkPipelineCreateFlagBits2KHR create_flags = radv_get_pipeline_create_flags(pCreateInfo);
 
@@ -1562,7 +1465,7 @@ radv_build_traversal_shader(struct radv_device *device, struct radv_ray_tracing_
    nir_store_var(&b, vars.arg, nir_load_rt_arg_scratch_offset_amd(&b), 0x1);
    nir_store_var(&b, vars.stack_ptr, nir_imm_int(&b, 0), 0x1);
 
-   radv_build_traversal(device, pipeline, pCreateInfo, false, &b, &vars, false);
+   radv_build_traversal(device, pipeline, pCreateInfo, key, &b, &vars);
 
    /* Deal with all the inline functions. */
    nir_index_ssa_defs(nir_shader_get_entrypoint(b.shader));
@@ -1573,100 +1476,6 @@ radv_build_traversal_shader(struct radv_device *device, struct radv_ray_tracing_
    NIR_PASS_V(b.shader, nir_lower_vars_to_ssa);
 
    return b.shader;
-}
-
-struct lower_rt_instruction_monolithic_state {
-   struct radv_device *device;
-   struct radv_ray_tracing_pipeline *pipeline;
-   const struct radv_pipeline_key *key;
-   const VkRayTracingPipelineCreateInfoKHR *pCreateInfo;
-
-   struct rt_variables *vars;
-};
-
-static bool
-lower_rt_instruction_monolithic(nir_builder *b, nir_instr *instr, void *data)
-{
-   if (instr->type != nir_instr_type_intrinsic)
-      return false;
-
-   b->cursor = nir_after_instr(instr);
-
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-
-   struct lower_rt_instruction_monolithic_state *state = data;
-   struct rt_variables *vars = state->vars;
-
-   switch (intr->intrinsic) {
-   case nir_intrinsic_execute_callable:
-      unreachable("nir_intrinsic_execute_callable");
-   case nir_intrinsic_trace_ray: {
-      nir_store_var(b, vars->arg, nir_iadd_imm(b, intr->src[10].ssa, -b->shader->scratch_size), 1);
-
-      nir_src cull_mask = intr->src[2];
-      bool ignore_cull_mask = nir_src_is_const(cull_mask) && (nir_src_as_uint(cull_mask) & 0xFF) == 0xFF;
-
-      /* Per the SPIR-V extension spec we have to ignore some bits for some arguments. */
-      nir_store_var(b, vars->accel_struct, intr->src[0].ssa, 0x1);
-      nir_store_var(b, vars->cull_mask_and_flags, nir_ior(b, nir_ishl_imm(b, cull_mask.ssa, 24), intr->src[1].ssa),
-                    0x1);
-      nir_store_var(b, vars->sbt_offset, nir_iand_imm(b, intr->src[3].ssa, 0xf), 0x1);
-      nir_store_var(b, vars->sbt_stride, nir_iand_imm(b, intr->src[4].ssa, 0xf), 0x1);
-      nir_store_var(b, vars->miss_index, nir_iand_imm(b, intr->src[5].ssa, 0xffff), 0x1);
-      nir_store_var(b, vars->origin, intr->src[6].ssa, 0x7);
-      nir_store_var(b, vars->tmin, intr->src[7].ssa, 0x1);
-      nir_store_var(b, vars->direction, intr->src[8].ssa, 0x7);
-      nir_store_var(b, vars->tmax, intr->src[9].ssa, 0x1);
-
-      nir_def *stack_ptr = nir_load_var(b, vars->stack_ptr);
-      nir_store_var(b, vars->stack_ptr, nir_iadd_imm(b, stack_ptr, b->shader->scratch_size), 0x1);
-
-      radv_build_traversal(state->device, state->pipeline, state->pCreateInfo, true, b, vars, ignore_cull_mask);
-      b->shader->info.shared_size = MAX2(b->shader->info.shared_size, state->device->physical_device->rt_wave_size *
-                                                                         MAX_STACK_ENTRY_COUNT * sizeof(uint32_t));
-
-      nir_store_var(b, vars->stack_ptr, stack_ptr, 0x1);
-
-      nir_instr_remove(instr);
-      return true;
-   }
-   case nir_intrinsic_rt_resume:
-      unreachable("nir_intrinsic_rt_resume");
-   case nir_intrinsic_rt_return_amd:
-      unreachable("nir_intrinsic_rt_return_amd");
-   case nir_intrinsic_execute_closest_hit_amd:
-      unreachable("nir_intrinsic_execute_closest_hit_amd");
-   case nir_intrinsic_execute_miss_amd:
-      unreachable("nir_intrinsic_execute_miss_amd");
-   default:
-      return false;
-   }
-}
-
-static void
-lower_rt_instructions_monolithic(nir_shader *shader, struct radv_device *device,
-                                 struct radv_ray_tracing_pipeline *pipeline,
-                                 const VkRayTracingPipelineCreateInfoKHR *pCreateInfo, struct rt_variables *vars)
-{
-   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
-
-   struct lower_rt_instruction_monolithic_state state = {
-      .device = device,
-      .pipeline = pipeline,
-      .pCreateInfo = pCreateInfo,
-      .vars = vars,
-   };
-
-   nir_shader_instructions_pass(shader, lower_rt_instruction_monolithic, nir_metadata_none, &state);
-   nir_index_ssa_defs(impl);
-
-   /* Register storage for hit attributes */
-   nir_variable *hit_attribs[RADV_MAX_HIT_ATTRIB_SIZE / sizeof(uint32_t)];
-
-   for (uint32_t i = 0; i < ARRAY_SIZE(hit_attribs); i++)
-      hit_attribs[i] = nir_local_variable_create(impl, glsl_uint_type(), "ahit_attrib");
-
-   lower_hit_attribs(shader, hit_attribs, 0);
 }
 
 /** Select the next shader based on priorities:
@@ -1709,18 +1518,13 @@ select_next_shader(nir_builder *b, nir_def *shader_addr, unsigned wave_size)
 void
 radv_nir_lower_rt_abi(nir_shader *shader, const VkRayTracingPipelineCreateInfoKHR *pCreateInfo,
                       const struct radv_shader_args *args, const struct radv_shader_info *info, uint32_t *stack_size,
-                      bool resume_shader, struct radv_device *device, struct radv_ray_tracing_pipeline *pipeline,
-                      bool monolithic)
+                      bool resume_shader)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
 
    const VkPipelineCreateFlagBits2KHR create_flags = radv_get_pipeline_create_flags(pCreateInfo);
 
    struct rt_variables vars = create_rt_variables(shader, create_flags);
-
-   if (monolithic)
-      lower_rt_instructions_monolithic(shader, device, pipeline, pCreateInfo, &vars);
-
    lower_rt_instructions(shader, &vars, true);
 
    if (stack_size) {
@@ -1782,36 +1586,32 @@ radv_nir_lower_rt_abi(nir_shader *shader, const VkRayTracingPipelineCreateInfoKH
    if (shader_guard)
       nir_pop_if(&b, shader_guard);
 
+   /* select next shader */
    b.cursor = nir_after_impl(impl);
 
-   if (monolithic) {
-      nir_terminate(&b);
-   } else {
-      /* select next shader */
-      shader_addr = nir_load_var(&b, vars.shader_addr);
-      nir_def *next = select_next_shader(&b, shader_addr, info->wave_size);
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.uniform_shader_addr, next);
+   shader_addr = nir_load_var(&b, vars.shader_addr);
+   nir_def *next = select_next_shader(&b, shader_addr, info->wave_size);
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.uniform_shader_addr, next);
 
-      /* store back all variables to registers */
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.dynamic_callable_stack_base, nir_load_var(&b, vars.stack_ptr));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.shader_addr, shader_addr);
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.shader_record, nir_load_var(&b, vars.shader_record_ptr));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.payload_offset, nir_load_var(&b, vars.arg));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.accel_struct, nir_load_var(&b, vars.accel_struct));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.cull_mask_and_flags, nir_load_var(&b, vars.cull_mask_and_flags));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.sbt_offset, nir_load_var(&b, vars.sbt_offset));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.sbt_stride, nir_load_var(&b, vars.sbt_stride));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.miss_index, nir_load_var(&b, vars.miss_index));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_origin, nir_load_var(&b, vars.origin));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_tmin, nir_load_var(&b, vars.tmin));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_direction, nir_load_var(&b, vars.direction));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_tmax, nir_load_var(&b, vars.tmax));
+   /* store back all variables to registers */
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.dynamic_callable_stack_base, nir_load_var(&b, vars.stack_ptr));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.shader_addr, shader_addr);
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.shader_record, nir_load_var(&b, vars.shader_record_ptr));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.payload_offset, nir_load_var(&b, vars.arg));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.accel_struct, nir_load_var(&b, vars.accel_struct));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.cull_mask_and_flags, nir_load_var(&b, vars.cull_mask_and_flags));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.sbt_offset, nir_load_var(&b, vars.sbt_offset));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.sbt_stride, nir_load_var(&b, vars.sbt_stride));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.miss_index, nir_load_var(&b, vars.miss_index));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_origin, nir_load_var(&b, vars.origin));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_tmin, nir_load_var(&b, vars.tmin));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_direction, nir_load_var(&b, vars.direction));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.ray_tmax, nir_load_var(&b, vars.tmax));
 
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.primitive_id, nir_load_var(&b, vars.primitive_id));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.instance_addr, nir_load_var(&b, vars.instance_addr));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.geometry_id_and_flags, nir_load_var(&b, vars.geometry_id_and_flags));
-      ac_nir_store_arg(&b, &args->ac, args->ac.rt.hit_kind, nir_load_var(&b, vars.hit_kind));
-   }
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.primitive_id, nir_load_var(&b, vars.primitive_id));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.instance_addr, nir_load_var(&b, vars.instance_addr));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.geometry_id_and_flags, nir_load_var(&b, vars.geometry_id_and_flags));
+   ac_nir_store_arg(&b, &args->ac, args->ac.rt.hit_kind, nir_load_var(&b, vars.hit_kind));
 
    nir_metadata_preserve(impl, nir_metadata_none);
 

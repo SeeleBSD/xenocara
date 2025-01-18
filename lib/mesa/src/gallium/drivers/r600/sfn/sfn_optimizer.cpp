@@ -375,11 +375,7 @@ CopyPropFwdVisitor::visit(AluInstr *instr)
 
    auto mov_block_id = instr->block_id();
 
-   /** libc++ seems to invalidate the end iterator too if a std::set is
-    *  made empty by an erase operation,
-    *  https://gitlab.freedesktop.org/mesa/mesa/-/issues/7931
-    */
-   while(ii != ie && !dest->uses().empty()) {
+   while(ii != ie) {
       auto i = *ii;
       auto target_block_id = i->block_id();
 
@@ -644,8 +640,7 @@ CopyPropFwdVisitor::propagate_to(RegisterVec4& value, Instr *instr)
 
          value.set_value(i, new_src[i]);
 
-         if (new_src[i]->pin() != pin_fully &&
-             new_src[i]->pin() != pin_chgr) {
+         if (new_src[i]->pin() != pin_fully) {
             if (new_src[i]->pin() == pin_chan)
                new_src[i]->set_pin(pin_chgr);
             else
@@ -824,52 +819,7 @@ public:
    bool has_group_dest;
 };
 
-class HasVecSrcVisitor : public ConstInstrVisitor {
-public:
-   HasVecSrcVisitor():
-       has_group_src(false)
-   {
-   }
 
-   void visit(UNUSED const AluInstr& instr) override { }
-   void visit(UNUSED const AluGroup& instr) override { }
-   void visit(UNUSED const FetchInstr& instr) override  { };
-   void visit(UNUSED const Block& instr) override { };
-   void visit(UNUSED const ControlFlowInstr& instr) override{ }
-   void visit(UNUSED const IfInstr& instr) override{ }
-   void visit(UNUSED const LDSAtomicInstr& instr) override { };
-   void visit(UNUSED const LDSReadInstr& instr) override { };
-
-   void visit(const TexInstr& instr) override { check(instr.src()); }
-   void visit(const ExportInstr& instr) override { check(instr.value()); }
-   void visit(const GDSInstr& instr) override { check(instr.src()); }
-
-   // No swizzling supported, so we want to keep the register group
-   void visit(UNUSED const ScratchIOInstr& instr) override  { has_group_src = true; };
-   void visit(UNUSED const StreamOutInstr& instr) override { has_group_src = true; }
-   void visit(UNUSED const MemRingOutInstr& instr) override { has_group_src = true; }
-   void visit(UNUSED const RatInstr& instr) override { has_group_src = true; };
-
-   void visit(UNUSED const EmitVertexInstr& instr) override { }
-
-   // We always emit at least two values
-   void visit(UNUSED const WriteTFInstr& instr) override { has_group_src = true; };
-
-
-   void check(const RegisterVec4& value);
-
-   bool has_group_src;
-};
-
-void HasVecSrcVisitor::check(const RegisterVec4& value)
-{
-   int nval = 0;
-   for (int i = 0; i < 4 && nval < 2; ++i) {
-      if (value[i]->chan() < 4)
-         ++nval;
-   }
-   has_group_src = nval > 1;
-}
 
 bool
 simplify_source_vectors(Shader& sh)
@@ -903,14 +853,7 @@ SimplifySourceVecVisitor::visit(TexInstr *instr)
                      break;
                }
 
-               HasVecSrcVisitor check_src;
-               for (auto p : src[i]->uses()) {
-                  p->accept(check_src);
-                  if (check_src.has_group_src)
-                     break;
-               }
-
-               if (check_dests.has_group_dest || check_src.has_group_src)
+               if (check_dests.has_group_dest)
                   break;
 
                if (src[i]->pin() == pin_group)

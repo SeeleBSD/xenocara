@@ -534,6 +534,7 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 16;
       case PIPE_SHADER_CAP_SUPPORTED_IRS:
          return (1 << PIPE_SHADER_IR_TGSI) | (1 << PIPE_SHADER_IR_NIR);
+      case PIPE_SHADER_CAP_DROUND_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
@@ -595,6 +596,7 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 0;
       case PIPE_SHADER_CAP_SUPPORTED_IRS:
          return (1 << PIPE_SHADER_IR_TGSI) | (1 << PIPE_SHADER_IR_NIR);
+      case PIPE_SHADER_CAP_DROUND_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
       case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
@@ -707,6 +709,11 @@ vgpu10_get_shader_param(struct pipe_screen *screen,
          return (1 << PIPE_SHADER_IR_TGSI) | (1 << PIPE_SHADER_IR_NIR);
       else
          return 0;
+   case PIPE_SHADER_CAP_DROUND_SUPPORTED:
+      /* For the above cases, we rely on the GLSL compiler to translate/lower
+       * the TGIS instruction into other instructions we do support.
+       */
+      return 0;
 
    case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
       return sws->have_gl43 ? SVGA_MAX_IMAGES : 0;
@@ -733,10 +740,11 @@ vgpu10_get_shader_param(struct pipe_screen *screen,
    .lower_extract_word = true,                                                \
    .lower_insert_byte = true,                                                 \
    .lower_insert_word = true,                                                 \
-   .lower_int64_options = nir_lower_imul_2x32_64 | nir_lower_divmod64,        \
+   .lower_int64_options = nir_lower_imul_2x32_64,                             \
    .lower_fdph = true,                                                        \
    .lower_flrp64 = true,                                                      \
    .lower_ldexp = true,                                                       \
+   .lower_rotate = true,                                                      \
    .lower_uniforms_to_ubo = true,                                             \
    .lower_vector_cmp = true,                                                  \
    .lower_cs_local_index_to_id = true,                                        \
@@ -744,7 +752,7 @@ vgpu10_get_shader_param(struct pipe_screen *screen,
    .use_interpolated_input_intrinsics = true
 
 #define VGPU10_OPTIONS                                                        \
-   .lower_doubles_options = nir_lower_dfloor | nir_lower_dsign | nir_lower_dceil | nir_lower_dtrunc | nir_lower_dround_even, \
+   .lower_doubles_options = nir_lower_dfloor,                                 \
    .lower_fmod = true,                                                        \
    .lower_fpow = true
 

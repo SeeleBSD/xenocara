@@ -1,16 +1,10 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #include "nvk_private.h"
 #include "nvk_device.h"
 #include "nvk_physical_device.h"
 #include "nvk_pipeline.h"
 #include "nvk_shader.h"
-
 #include "vk_nir.h"
 #include "vk_pipeline.h"
-#include "vk_pipeline_layout.h"
 
 #include "nouveau_bo.h"
 #include "nouveau_context.h"
@@ -181,9 +175,15 @@ nvk_compute_pipeline_create(struct nvk_device *dev,
                                      pCreateInfo->pNext,
                                      pCreateInfo->stage.pNext);
 
+   const nir_shader_compiler_options *nir_options =
+      nvk_physical_device_nir_options(pdev, MESA_SHADER_COMPUTE);
+   const struct spirv_to_nir_options spirv_options =
+      nvk_physical_device_spirv_options(pdev, &robustness);
+
    nir_shader *nir;
-   result = nvk_shader_stage_to_nir(dev, &pCreateInfo->stage, &robustness,
-                                    cache, NULL, &nir);
+   result = vk_pipeline_shader_stage_to_nir(&dev->vk, &pCreateInfo->stage,
+                                            &spirv_options, nir_options,
+                                            NULL, &nir);
    if (result != VK_SUCCESS)
       goto fail;
 

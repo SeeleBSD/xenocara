@@ -79,7 +79,6 @@ fn load_env() {
                 "clc" => debug.clc = true,
                 "program" => debug.program = true,
                 "sync" => debug.sync_every_event = true,
-                "" => (),
                 _ => eprintln!("Unknown RUSTICL_DEBUG flag found: {}", flag),
             }
         }
@@ -91,7 +90,6 @@ fn load_env() {
             match flag {
                 "fp16" => features.fp16 = true,
                 "fp64" => features.fp64 = true,
-                "" => (),
                 _ => eprintln!("Unknown RUSTICL_FEATURES flag found: {}", flag),
             }
         }

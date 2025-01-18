@@ -82,7 +82,6 @@ static inline uint32_t ATTRIBUTE_PURE
 ${item.token_name}_${prop}(const struct intel_device_info *devinfo)
 {
    switch (devinfo->verx10) {
-   case 200: return ${item.get_prop(prop, 20)};
    case 125: return ${item.get_prop(prop, 12.5)};
    case 120: return ${item.get_prop(prop, 12)};
    case 110: return ${item.get_prop(prop, 11)};
@@ -267,7 +266,7 @@ class XmlParser(object):
             self.container_stack.pop()
         elif name == 'field':
             self.process_field(attrs)
-        elif name in ('enum', 'import'):
+        elif name == 'enum':
             pass
         else:
             assert False
@@ -331,7 +330,6 @@ def main():
         p = XmlParser(containers)
         genxml = intel_genxml.GenXml(source)
         genxml.filter_engines(engines)
-        genxml.merge_imported()
         p.emit_genxml(genxml)
 
     included_symbols_list = pargs.include_symbols.split(',')

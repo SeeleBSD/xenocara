@@ -125,13 +125,6 @@ radv_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struct radv
       radeon_emit(cs, va >> 8);
       radeon_emit(cs, S_00B024_MEM_BASE(va >> 40));
    }
-
-   /* MS */
-   if (pipeline->base.shaders[MESA_SHADER_MESH]) {
-      va = reloc->va[MESA_SHADER_MESH];
-
-      radeon_set_sh_reg(cs, R_00B320_SPI_SHADER_PGM_LO_ES, va >> 8);
-   }
 }
 
 static uint64_t
@@ -365,17 +358,12 @@ radv_describe_draw(struct radv_cmd_buffer *cmd_buffer)
 }
 
 void
-radv_describe_dispatch(struct radv_cmd_buffer *cmd_buffer, const struct radv_dispatch_info *info)
+radv_describe_dispatch(struct radv_cmd_buffer *cmd_buffer, int x, int y, int z)
 {
    if (likely(!cmd_buffer->device->sqtt.bo))
       return;
 
-   if (info->indirect) {
-      radv_write_event_marker(cmd_buffer, cmd_buffer->state.current_event_type, UINT_MAX, UINT_MAX, UINT_MAX);
-   } else {
-      radv_write_event_with_dims_marker(cmd_buffer, cmd_buffer->state.current_event_type, info->blocks[0],
-                                        info->blocks[1], info->blocks[2]);
-   }
+   radv_write_event_with_dims_marker(cmd_buffer, cmd_buffer->state.current_event_type, x, y, z);
 }
 
 void
@@ -767,10 +755,10 @@ sqtt_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQueryPool queryPoo
                 flags);
 }
 
-#define EVENT_RT_MARKER(cmd_name, flags, ...) EVENT_MARKER_BASE(cmd_name, Dispatch, cmd_name | flags, __VA_ARGS__);
+#define EVENT_RT_MARKER(cmd_name, ...)                                                                                 \
+   EVENT_MARKER_BASE(cmd_name, Dispatch, cmd_name | ApiRayTracingSeparateCompiled, __VA_ARGS__);
 
-#define EVENT_RT_MARKER_ALIAS(cmd_name, event_name, flags, ...)                                                        \
-   EVENT_MARKER_BASE(cmd_name, Dispatch, event_name | flags, __VA_ARGS__);
+#define EVENT_RT_MARKER_ALIAS(cmd_name, event_name, ...) EVENT_MARKER_BASE(cmd_name, Dispatch, event_name, __VA_ARGS__);
 
 VKAPI_ATTR void VKAPI_CALL
 sqtt_CmdTraceRaysKHR(VkCommandBuffer commandBuffer, const VkStridedDeviceAddressRegionKHR *pRaygenShaderBindingTable,
@@ -779,8 +767,8 @@ sqtt_CmdTraceRaysKHR(VkCommandBuffer commandBuffer, const VkStridedDeviceAddress
                      const VkStridedDeviceAddressRegionKHR *pCallableShaderBindingTable, uint32_t width,
                      uint32_t height, uint32_t depth)
 {
-   EVENT_RT_MARKER(TraceRaysKHR, ApiRayTracingSeparateCompiled, commandBuffer, pRaygenShaderBindingTable,
-                   pMissShaderBindingTable, pHitShaderBindingTable, pCallableShaderBindingTable, width, height, depth);
+   EVENT_RT_MARKER(TraceRaysKHR, commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable,
+                   pHitShaderBindingTable, pCallableShaderBindingTable, width, height, depth);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -791,15 +779,14 @@ sqtt_CmdTraceRaysIndirectKHR(VkCommandBuffer commandBuffer,
                              const VkStridedDeviceAddressRegionKHR *pCallableShaderBindingTable,
                              VkDeviceAddress indirectDeviceAddress)
 {
-   EVENT_RT_MARKER(TraceRaysIndirectKHR, ApiRayTracingSeparateCompiled, commandBuffer, pRaygenShaderBindingTable,
-                   pMissShaderBindingTable, pHitShaderBindingTable, pCallableShaderBindingTable, indirectDeviceAddress);
+   EVENT_RT_MARKER(TraceRaysIndirectKHR, commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable,
+                   pHitShaderBindingTable, pCallableShaderBindingTable, indirectDeviceAddress);
 }
 
 VKAPI_ATTR void VKAPI_CALL
 sqtt_CmdTraceRaysIndirect2KHR(VkCommandBuffer commandBuffer, VkDeviceAddress indirectDeviceAddress)
 {
-   EVENT_RT_MARKER_ALIAS(TraceRaysIndirect2KHR, TraceRaysIndirectKHR, ApiRayTracingSeparateCompiled, commandBuffer,
-                         indirectDeviceAddress);
+   EVENT_RT_MARKER_ALIAS(TraceRaysIndirect2KHR, TraceRaysIndirectKHR, commandBuffer, indirectDeviceAddress);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -807,27 +794,27 @@ sqtt_CmdBuildAccelerationStructuresKHR(VkCommandBuffer commandBuffer, uint32_t i
                                        const VkAccelerationStructureBuildGeometryInfoKHR *pInfos,
                                        const VkAccelerationStructureBuildRangeInfoKHR *const *ppBuildRangeInfos)
 {
-   EVENT_RT_MARKER(BuildAccelerationStructuresKHR, 0, commandBuffer, infoCount, pInfos, ppBuildRangeInfos);
+   EVENT_RT_MARKER(BuildAccelerationStructuresKHR, commandBuffer, infoCount, pInfos, ppBuildRangeInfos);
 }
 
 VKAPI_ATTR void VKAPI_CALL
 sqtt_CmdCopyAccelerationStructureKHR(VkCommandBuffer commandBuffer, const VkCopyAccelerationStructureInfoKHR *pInfo)
 {
-   EVENT_RT_MARKER(CopyAccelerationStructureKHR, 0, commandBuffer, pInfo);
+   EVENT_RT_MARKER(CopyAccelerationStructureKHR, commandBuffer, pInfo);
 }
 
 VKAPI_ATTR void VKAPI_CALL
 sqtt_CmdCopyAccelerationStructureToMemoryKHR(VkCommandBuffer commandBuffer,
                                              const VkCopyAccelerationStructureToMemoryInfoKHR *pInfo)
 {
-   EVENT_RT_MARKER(CopyAccelerationStructureToMemoryKHR, 0, commandBuffer, pInfo);
+   EVENT_RT_MARKER(CopyAccelerationStructureToMemoryKHR, commandBuffer, pInfo);
 }
 
 VKAPI_ATTR void VKAPI_CALL
 sqtt_CmdCopyMemoryToAccelerationStructureKHR(VkCommandBuffer commandBuffer,
                                              const VkCopyMemoryToAccelerationStructureInfoKHR *pInfo)
 {
-   EVENT_RT_MARKER(CopyMemoryToAccelerationStructureKHR, 0, commandBuffer, pInfo);
+   EVENT_RT_MARKER(CopyMemoryToAccelerationStructureKHR, commandBuffer, pInfo);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -951,14 +938,6 @@ VKAPI_ATTR void VKAPI_CALL
 sqtt_CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount, const VkCommandBuffer *pCmdBuffers)
 {
    API_MARKER(ExecuteCommands, commandBuffer, commandBufferCount, pCmdBuffers);
-}
-
-VKAPI_ATTR void VKAPI_CALL
-sqtt_CmdExecuteGeneratedCommandsNV(VkCommandBuffer commandBuffer, VkBool32 isPreprocessed,
-                                   const VkGeneratedCommandsInfoNV *pGeneratedCommandsInfo)
-{
-   /* There is no ExecuteIndirect Vulkan event in RGP yet. */
-   API_MARKER_ALIAS(ExecuteGeneratedCommandsNV, ExecuteCommands, commandBuffer, isPreprocessed, pGeneratedCommandsInfo);
 }
 
 VKAPI_ATTR void VKAPI_CALL

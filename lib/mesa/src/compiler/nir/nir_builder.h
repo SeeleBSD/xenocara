@@ -80,40 +80,6 @@ typedef bool (*nir_intrinsic_pass_cb)(struct nir_builder *,
                                       nir_intrinsic_instr *, void *);
 
 /**
- * Iterates over all the instructions in a NIR function and calls the given pass
- * on them.
- *
- * The pass should return true if it modified the function.  In that case, only
- * the preserved metadata flags will be preserved in the function impl.
- *
- * The builder will be initialized to point at the function impl, but its
- * cursor is unset.
- */
-static inline bool
-nir_function_instructions_pass(nir_function_impl *impl,
-                               nir_instr_pass_cb pass,
-                               nir_metadata preserved,
-                               void *cb_data)
-{
-   bool progress = false;
-   nir_builder b = nir_builder_create(impl);
-
-   nir_foreach_block_safe(block, impl) {
-      nir_foreach_instr_safe(instr, block) {
-         progress |= pass(&b, instr, cb_data);
-      }
-   }
-
-   if (progress) {
-      nir_metadata_preserve(impl, preserved);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
-   }
-
-   return progress;
-}
-
-/**
  * Iterates over all the instructions in a NIR shader and calls the given pass
  * on them.
  *
@@ -132,8 +98,21 @@ nir_shader_instructions_pass(nir_shader *shader,
    bool progress = false;
 
    nir_foreach_function_impl(impl, shader) {
-      progress |= nir_function_instructions_pass(impl, pass,
-                                                 preserved, cb_data);
+      bool func_progress = false;
+      nir_builder b = nir_builder_create(impl);
+
+      nir_foreach_block_safe(block, impl) {
+         nir_foreach_instr_safe(instr, block) {
+            func_progress |= pass(&b, instr, cb_data);
+         }
+      }
+
+      if (func_progress) {
+         nir_metadata_preserve(impl, preserved);
+         progress = true;
+      } else {
+         nir_metadata_preserve(impl, nir_metadata_all);
+      }
    }
 
    return progress;
@@ -1349,6 +1328,9 @@ nir_resize_vector(nir_builder *b, nir_def *src, unsigned num_components)
 }
 
 nir_def *
+nir_ssa_for_src(nir_builder *build, nir_src src, int num_components);
+
+nir_def *
 nir_ssa_for_alu_src(nir_builder *build, nir_alu_instr *instr, unsigned srcn);
 
 static inline unsigned
@@ -1483,12 +1465,9 @@ nir_build_deref_struct(nir_builder *build, nir_deref_instr *parent,
 }
 
 static inline nir_deref_instr *
-nir_build_deref_cast_with_alignment(nir_builder *build, nir_def *parent,
-                                    nir_variable_mode modes,
-                                    const struct glsl_type *type,
-                                    unsigned ptr_stride,
-                                    unsigned align_mul,
-                                    unsigned align_offset)
+nir_build_deref_cast(nir_builder *build, nir_def *parent,
+                     nir_variable_mode modes, const struct glsl_type *type,
+                     unsigned ptr_stride)
 {
    nir_deref_instr *deref =
       nir_deref_instr_create(build->shader, nir_deref_type_cast);
@@ -1496,8 +1475,6 @@ nir_build_deref_cast_with_alignment(nir_builder *build, nir_def *parent,
    deref->modes = modes;
    deref->type = type;
    deref->parent = nir_src_for_ssa(parent);
-   deref->cast.align_mul = align_mul;
-   deref->cast.align_offset = align_offset;
    deref->cast.ptr_stride = ptr_stride;
 
    nir_def_init(&deref->instr, &deref->def, parent->num_components,
@@ -1506,15 +1483,6 @@ nir_build_deref_cast_with_alignment(nir_builder *build, nir_def *parent,
    nir_builder_instr_insert(build, &deref->instr);
 
    return deref;
-}
-
-static inline nir_deref_instr *
-nir_build_deref_cast(nir_builder *build, nir_def *parent,
-                     nir_variable_mode modes, const struct glsl_type *type,
-                     unsigned ptr_stride)
-{
-   return nir_build_deref_cast_with_alignment(build, parent, modes, type,
-                                              ptr_stride, 0, 0);
 }
 
 static inline nir_deref_instr *
@@ -1584,17 +1552,9 @@ nir_build_deref_follower(nir_builder *b, nir_deref_instr *parent,
 
       return nir_build_deref_struct(b, parent, leader->strct.index);
 
-   case nir_deref_type_cast:
-      return nir_build_deref_cast_with_alignment(b, &parent->def,
-                                                 leader->modes,
-                                                 leader->type,
-                                                 leader->cast.ptr_stride,
-                                                 leader->cast.align_mul,
-                                                 leader->cast.align_offset);
    default:
       unreachable("Invalid deref instruction type");
    }
-   return NULL;
 }
 
 static inline nir_def *

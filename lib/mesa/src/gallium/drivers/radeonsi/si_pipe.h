@@ -15,10 +15,8 @@
 #include "util/u_suballoc.h"
 #include "util/u_threaded_context.h"
 #include "util/u_vertex_state_cache.h"
-#include "util/perf/u_trace.h"
 #include "ac_sqtt.h"
 #include "ac_spm.h"
-#include "si_perfetto.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -223,7 +221,6 @@ enum
    DBG_RESERVE_VMID,
    DBG_SHADOW_REGS,
    DBG_NO_FAST_DISPLAY_LIST,
-   DBG_NO_DMA_SHADERS,
 
    /* Multimedia options: */
    DBG_NO_EFC,
@@ -543,11 +540,6 @@ struct radeon_saved_cs {
    unsigned bo_count;
 };
 
-struct si_aux_context {
-   struct pipe_context *ctx;
-   mtx_t lock;
-};
-
 struct si_screen {
    struct pipe_screen b;
    struct radeon_winsys *ws;
@@ -599,19 +591,9 @@ struct si_screen {
 
    unsigned max_texel_buffer_elements;
 
-   /* Auxiliary context. Used to initialize resources and upload shaders. */
-   union {
-      struct {
-         struct si_aux_context general;
-
-         /* Second auxiliary context for uploading shaders. When the first auxiliary context is
-          * locked and wants to compile and upload shaders, we need to use a second auxiliary
-          * context because the first one is locked.
-          */
-         struct si_aux_context shader_upload;
-      } aux_context;
-      struct si_aux_context aux_contexts[2];
-   };
+   /* Auxiliary context. Mainly used to initialize resources. */
+   void *aux_context;
+   mtx_t aux_context_lock;
 
    /* Async compute context for DRI_PRIME copies. */
    struct pipe_context *async_compute_context;
@@ -1363,14 +1345,6 @@ struct si_context {
    /* TODO: move other shaders here too */
    /* Only used for DCC MSAA clears with 4-8 fragments and 4-16 samples. */
    void *cs_clear_dcc_msaa[32][5][2][3][2]; /* [swizzle_mode][log2(bpe)][fragments == 8][log2(samples)-2][is_array] */
-   
-   /* u_trace logging*/
-   struct si_ds_device ds;
-   /** Where tracepoints are recorded */
-   struct u_trace trace;
-   struct si_ds_queue ds_queue;
-   uint32_t *last_timestamp_cmd;
-   unsigned int last_timestamp_cmd_cdw;
 };
 
 /* si_blit.c */
@@ -1563,7 +1537,6 @@ void si_allocate_gds(struct si_context *ctx);
 void si_set_tracked_regs_to_clear_state(struct si_context *ctx);
 void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs);
 void si_trace_emit(struct si_context *sctx);
-void si_emit_ts(struct si_context *sctx, struct si_resource* buffer, unsigned int offset);
 void si_emit_surface_sync(struct si_context *sctx, struct radeon_cmdbuf *cs,
                           unsigned cp_coher_cntl);
 void gfx10_emit_cache_flush(struct si_context *sctx, struct radeon_cmdbuf *cs);
@@ -1586,9 +1559,8 @@ void si_init_compute_functions(struct si_context *sctx);
 /* si_pipe.c */
 bool si_init_compiler(struct si_screen *sscreen, struct ac_llvm_compiler *compiler);
 void si_init_aux_async_compute_ctx(struct si_screen *sscreen);
-struct si_context *si_get_aux_context(struct si_aux_context *ctx);
-void si_put_aux_context_flush(struct si_aux_context *ctx);
-void si_put_aux_shader_upload_context_flush(struct si_screen *sscreen);
+struct si_context* si_get_aux_context(struct si_screen *sscreen);
+void si_put_aux_context_flush(struct si_screen *sscreen);
 
 /* si_perfcounters.c */
 void si_init_perfcounters(struct si_screen *screen);
@@ -1652,8 +1624,9 @@ void *si_get_blitter_vs(struct si_context *sctx, enum blitter_attrib_type type,
 void *si_create_dma_compute_shader(struct pipe_context *ctx, unsigned num_dwords_per_thread,
                                    bool dst_stream_cache_policy, bool is_copy);
 void *si_create_clear_buffer_rmw_cs(struct si_context *sctx);
-void *si_clear_render_target_shader(struct si_context *sctx, enum pipe_texture_target type);
-void *si_clear_12bytes_buffer_shader(struct si_context *sctx);
+void *si_clear_render_target_shader(struct pipe_context *ctx);
+void *si_clear_render_target_shader_1d_array(struct pipe_context *ctx);
+void *si_clear_12bytes_buffer_shader(struct pipe_context *ctx);
 void *si_create_fmask_expand_cs(struct pipe_context *ctx, unsigned num_samples, bool is_array);
 void *si_create_query_result_cs(struct si_context *sctx);
 void *gfx11_create_sh_query_result_cs(struct si_context *sctx);

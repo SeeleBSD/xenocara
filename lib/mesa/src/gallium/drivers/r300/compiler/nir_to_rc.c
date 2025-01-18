@@ -609,13 +609,13 @@ ntr_try_store_in_tgsi_output_with_use(struct ntr_compile *c,
 {
    *dst = ureg_dst_undef();
 
-   if (nir_src_is_if(src))
+   if (src->is_if)
       return false;
 
-   if (nir_src_parent_instr(src)->type != nir_instr_type_intrinsic)
+   if (src->parent_instr->type != nir_instr_type_intrinsic)
       return false;
 
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(src->parent_instr);
    if (intr->intrinsic != nir_intrinsic_store_output ||
        !nir_src_is_const(intr->src[1])) {
       return false;
@@ -643,7 +643,7 @@ ntr_try_store_reg_in_tgsi_output(struct ntr_compile *c, struct ureg_dst *dst,
    /* Look for a single use for try_store_in_tgsi_output */
    nir_src *use = NULL;
    nir_foreach_reg_load(src, reg_decl) {
-      nir_intrinsic_instr *load = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+      nir_intrinsic_instr *load = nir_instr_as_intrinsic(src->parent_instr);
       nir_foreach_use_including_if(load_use, &load->def) {
          /* We can only have one use */
          if (use != NULL)
@@ -1528,7 +1528,7 @@ ntr_emit_store_output(struct ntr_compile *c, nir_intrinsic_instr *instr)
    }
 
    uint8_t swizzle[4] = { 0, 0, 0, 0 };
-   for (int i = frac; i < 4; i++) {
+   for (int i = frac; i <= 4; i++) {
       if (out.WriteMask & (1 << i))
          swizzle[i] = i - frac;
    }
@@ -2451,7 +2451,6 @@ const void *nir_to_rc_options(struct nir_shader *s,
        nir_move_comparisons | nir_move_copies | nir_move_load_ssbo;
 
    NIR_PASS_V(s, nir_opt_move, move_all);
-   NIR_PASS_V(s, nir_move_vec_src_uses_to_dest, true);
 
    NIR_PASS_V(s, nir_convert_from_ssa, true);
    NIR_PASS_V(s, nir_lower_vec_to_regs, NULL, NULL);

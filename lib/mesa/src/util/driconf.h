@@ -324,18 +324,6 @@
    DRI_CONF_OPT_B(fake_sparse, def, \
                   "Advertise support for sparse binding of textures regardless of real support")
 
-#define DRI_CONF_INTEL_ENABLE_WA_14018912822(def) \
-   DRI_CONF_OPT_B(intel_enable_wa_14018912822, def, \
-                  "Intel workaround for using zero blend constants")
-
-#define DRI_CONF_VK_REQUIRE_ETC2(def) \
-  DRI_CONF_OPT_B(vk_require_etc2, def, \
-                 "Implement emulated ETC2 on HW that does not support it")
-
-#define DRI_CONF_VK_REQUIRE_ASTC(def) \
-   DRI_CONF_OPT_B(vk_require_astc, def, \
-                  "Implement emulated ASTC on HW that does not support it")
-
 /**
  * \brief Image quality-related options
  */
@@ -405,10 +393,6 @@
 #define DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(def) \
    DRI_CONF_OPT_B(vk_wsi_force_bgra8_unorm_first, def, \
                   "Force vkGetPhysicalDeviceSurfaceFormatsKHR to return VK_FORMAT_B8G8R8A8_UNORM as the first format")
-
-#define DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(def) \
-   DRI_CONF_OPT_B(vk_wsi_force_swapchain_to_current_extent, def, \
-                  "Force VkSwapchainCreateInfoKHR::imageExtent to be VkSurfaceCapabilities2KHR::currentExtent")
 
 #define DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(def) \
    DRI_CONF_OPT_I(vk_x11_override_min_image_count, def, 0, 999, \
@@ -583,14 +567,6 @@
                   "Disable conservative LRZ")
 
 /**
- * \brief Turnip specific configuration options
- */
-
-#define DRI_CONF_TU_DONT_RESERVE_DESCRIPTOR_SET(def) \
-   DRI_CONF_OPT_B(tu_dont_reserve_descriptor_set, def, \
-                  "Don't internally reserve one of the HW descriptor sets for descriptor set dynamic offset support, this frees up an extra descriptor set at the cost of that feature")
-
-/**
  * \brief venus specific configuration options
  */
 #define DRI_CONF_VENUS_IMPLICIT_FENCING(def) \
@@ -616,6 +592,10 @@
 #define DRI_CONF_RADV_DISABLE_SHRINK_IMAGE_STORE(def) \
    DRI_CONF_OPT_B(radv_disable_shrink_image_store, def, \
                   "Disabling shrinking of image stores based on the format")
+
+#define DRI_CONF_RADV_ABSOLUTE_DEPTH_BIAS(def) \
+   DRI_CONF_OPT_B(radv_absolute_depth_bias, def, \
+                  "Consider depthBiasConstantFactor an absolute depth bias (like D3D9)")
 
 #define DRI_CONF_RADV_OVERRIDE_UNIFORM_OFFSET_ALIGNMENT(def) \
    DRI_CONF_OPT_I(radv_override_uniform_offset_alignment, def, 0, 128, \
@@ -645,13 +625,13 @@
    DRI_CONF_OPT_B(radv_disable_dcc, def, \
                   "Disable DCC for color images")
 
+#define DRI_CONF_RADV_REQUIRE_ETC2(def)                                        \
+  DRI_CONF_OPT_B(radv_require_etc2, def,                                       \
+                 "Implement emulated ETC2 on HW that does not support it")
+
 #define DRI_CONF_RADV_DISABLE_ANISO_SINGLE_LEVEL(def) \
   DRI_CONF_OPT_B(radv_disable_aniso_single_level, def, \
                  "Disable anisotropic filtering for single level images")
-
-#define DRI_CONF_RADV_DISABLE_TRUNC_COORD(def) \
-  DRI_CONF_OPT_B(radv_disable_trunc_coord, def, \
-                 "Disable TRUNC_COORD to use D3D10/11/12 point sampling behaviour. This has special behaviour for DXVK.")
 
 #define DRI_CONF_RADV_DISABLE_SINKING_LOAD_INPUT_FS(def) \
    DRI_CONF_OPT_B(radv_disable_sinking_load_input_fs, def, \
@@ -674,10 +654,6 @@
    DRI_CONF_OPT_B(radv_tex_non_uniform, def, \
                   "Always mark texture sample operations as non-uniform.")
 
-#define DRI_CONF_RADV_SSBO_NON_UNIFORM(def) \
-   DRI_CONF_OPT_B(radv_ssbo_non_uniform, def, \
-                  "Always mark SSBO operations as non-uniform.")
-
 #define DRI_CONF_RADV_FLUSH_BEFORE_TIMESTAMP_WRITE(def) \
    DRI_CONF_OPT_B(radv_flush_before_timestamp_write, def, \
                   "Wait for previous commands to finish before writing timestamps")
@@ -688,25 +664,17 @@
 
 #define DRI_CONF_RADV_APP_LAYER() DRI_CONF_OPT_S_NODEF(radv_app_layer, "Select an application layer.")
 
-#define DRI_CONF_RADV_FORCE_ACTIVE_ACCEL_STRUCT_LEAVES(def) \
-   DRI_CONF_OPT_B(radv_force_active_accel_struct_leaves, def, \
-                  "Force leaf nodes of acceleration structures to be marked active.")
-
 /**
  * \brief ANV specific configuration options
  */
 
 #define DRI_CONF_ANV_ASSUME_FULL_SUBGROUPS(def) \
-   DRI_CONF_OPT_I(anv_assume_full_subgroups, def, 0, 32, \
-                  "Allow assuming full subgroups requirement even when it's not specified explicitly and set the given size")
+   DRI_CONF_OPT_B(anv_assume_full_subgroups, def, \
+                  "Allow assuming full subgroups requirement even when it's not specified explicitly")
 
 #define DRI_CONF_ANV_SAMPLE_MASK_OUT_OPENGL_BEHAVIOUR(def) \
    DRI_CONF_OPT_B(anv_sample_mask_out_opengl_behaviour, def, \
                   "Ignore sample mask out when having single sampled target")
-
-#define DRI_CONF_ANV_FORCE_FILTER_ADDR_ROUNDING(def) \
-   DRI_CONF_OPT_B(anv_force_filter_addr_rounding, def, \
-                  "Force min/mag filter address rounding to be enabled even for NEAREST sampling")
 
 #define DRI_CONF_ANV_MESH_CONV_PRIM_ATTRS_TO_VERT_ATTRS(def) \
    DRI_CONF_OPT_E(anv_mesh_conv_prim_attrs_to_vert_attrs, def, -2, 2, \
@@ -725,10 +693,6 @@
    DRI_CONF_OPT_I(generated_indirect_threshold, def, 0, INT32_MAX, \
                   "Indirect threshold count above which we start generating commands")
 
-#define DRI_CONF_ANV_GENERATED_INDIRECT_RING_THRESHOLD(def) \
-   DRI_CONF_OPT_I(generated_indirect_ring_threshold, def, 0, INT32_MAX, \
-                  "Indirect threshold count above which we start generating commands in a ring buffer")
-
 #define DRI_CONF_ANV_QUERY_CLEAR_WITH_BLORP_THRESHOLD(def) \
    DRI_CONF_OPT_I(query_clear_with_blorp_threshold, def, 0, INT32_MAX, \
                   "Query threshold count above which query buffers are cleared with blorp")
@@ -740,10 +704,6 @@
 #define DRI_CONF_ANV_FORCE_INDIRECT_DESCRIPTORS(def) \
    DRI_CONF_OPT_B(force_indirect_descriptors, def, \
                   "Use an indirection to access buffer/image/texture/sampler handles")
-
-#define DRI_CONF_ANV_DISABLE_FCV(def) \
-   DRI_CONF_OPT_B(anv_disable_fcv, def, \
-                  "Disable FCV optimization")
 
 /**
  * \brief DZN specific configuration options

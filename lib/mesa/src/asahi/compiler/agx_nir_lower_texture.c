@@ -8,7 +8,6 @@
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "compiler/nir/nir_builtin_builder.h"
-#include "agx_compile.h"
 #include "agx_compiler.h"
 #include "agx_internal_formats.h"
 #include "agx_nir.h"
@@ -18,6 +17,14 @@
 
 #define AGX_FORMAT_RGB32_EMULATED 0x36
 #define AGX_LAYOUT_LINEAR         0x0
+
+static void
+set_speculatable(nir_def *def)
+{
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(def->parent_instr);
+   nir_intrinsic_set_access(intr,
+                            nir_intrinsic_access(intr) | ACCESS_CAN_SPECULATE);
+}
 
 static nir_def *
 texture_descriptor_ptr_for_handle(nir_builder *b, nir_def *handle)
@@ -85,7 +92,8 @@ agx_txs(nir_builder *b, nir_tex_instr *tex)
    /* Add LOD offset to first level to get the interesting LOD */
    int lod_idx = nir_tex_instr_src_index(tex, nir_tex_src_lod);
    if (lod_idx >= 0) {
-      lod = nir_iadd(b, lod, nir_u2u32(b, tex->src[lod_idx].src.ssa));
+      lod = nir_iadd(
+         b, lod, nir_u2u32(b, nir_ssa_for_src(b, tex->src[lod_idx].src, 1)));
    }
 
    if (tex->sampler_dim == GLSL_SAMPLER_DIM_2D && tex->is_array) {
@@ -354,27 +362,13 @@ lower_regular_texture(nir_builder *b, nir_instr *instr, UNUSED void *data)
       if (tex->op != nir_texop_txf && tex->op != nir_texop_txf_ms)
          unclamped_layer = nir_f2u32(b, nir_fround_even(b, unclamped_layer));
 
-      /* For a cube array, the layer is zero-indexed component 3 of the
-       * coordinate but the number of layers is component 2 of the txs result.
-       */
-      if (tex->sampler_dim == GLSL_SAMPLER_DIM_CUBE) {
-         assert(lidx == 3 && "4 components");
-         lidx = 2;
-      }
-
       /* Clamp to max layer = (# of layers - 1) for out-of-bounds handling.
        * Layer must be 16-bits for the hardware, drop top bits after clamping.
        */
-      if (!(tex->backend_flags & AGX_TEXTURE_FLAG_NO_CLAMP)) {
-         nir_def *txs = nir_get_texture_size(b, tex);
-         nir_def *nr_layers = nir_channel(b, txs, lidx);
-         nir_def *max_layer = nir_iadd_imm(b, nr_layers, -1);
-         layer = nir_umin(b, unclamped_layer, max_layer);
-      } else {
-         layer = unclamped_layer;
-      }
-
-      layer = nir_u2u16(b, layer);
+      nir_def *txs = nir_get_texture_size(b, tex);
+      nir_def *nr_layers = nir_channel(b, txs, lidx);
+      nir_def *max_layer = nir_iadd_imm(b, nr_layers, -1);
+      layer = nir_u2u16(b, nir_umin(b, unclamped_layer, max_layer));
    }
 
    /* Combine layer and multisample index into 32-bit so we don't need a vec5 or
@@ -634,8 +628,12 @@ image_texel_address(nir_builder *b, nir_intrinsic_instr *intr,
    nir_def *meta = nir_load_global_constant(b, meta_ptr, 8, 1, 64);
    nir_def *layer_stride_px = NULL;
 
+   /* At least for binding tables in GL, we can speculate texture access */
+   set_speculatable(meta);
+
    if (layered) {
       nir_def *desc = nir_load_global_constant(b, meta, 8, 3, 32);
+      set_speculatable(desc);
       meta = nir_pack_64_2x32(b, nir_trim_vector(b, desc, 2));
       layer_stride_px = nir_channel(b, desc, 2);
    }
@@ -693,9 +691,12 @@ image_texel_address(nir_builder *b, nir_intrinsic_instr *intr,
    return nir_iadd(b, base, nir_u2u64(b, total_B));
 }
 
-static void
+static bool
 lower_buffer_image(nir_builder *b, nir_intrinsic_instr *intr)
 {
+   if (nir_intrinsic_image_dim(intr) != GLSL_SAMPLER_DIM_BUF)
+      return false;
+
    nir_def *coord_vector = intr->src[1].ssa;
    nir_def *coord = nir_channel(b, coord_vector, 0);
 
@@ -705,36 +706,22 @@ lower_buffer_image(nir_builder *b, nir_intrinsic_instr *intr)
    nir_def *coord2d = coords_for_buffer_texture(b, coord);
    nir_src_rewrite(&intr->src[1], nir_pad_vector(b, coord2d, 4));
    nir_intrinsic_set_image_dim(intr, GLSL_SAMPLER_DIM_2D);
+   return true;
 }
 
-static void
+static bool
 lower_1d_image(nir_builder *b, nir_intrinsic_instr *intr)
 {
+   if (nir_intrinsic_image_dim(intr) != GLSL_SAMPLER_DIM_1D)
+      return false;
+
    nir_def *coord = intr->src[1].ssa;
    bool is_array = nir_intrinsic_image_array(intr);
    nir_def *coord2d = coords_for_1d_texture(b, coord, is_array);
 
    nir_src_rewrite(&intr->src[1], nir_pad_vector(b, coord2d, 4));
    nir_intrinsic_set_image_dim(intr, GLSL_SAMPLER_DIM_2D);
-}
-
-/*
- * AGX needs the face and the layer specified separately. This matches how NIR
- * texture instructions work, but not how NIR image intrinsics work. Here we
- * lower by dividing the combined layer-face into separate components which the
- * compiler can consume.
- */
-static void
-lower_cube_array_image(nir_builder *b, nir_intrinsic_instr *intr)
-{
-   nir_def *x = nir_channel(b, intr->src[1].ssa, 0);
-   nir_def *y = nir_channel(b, intr->src[1].ssa, 1);
-   nir_def *z = nir_channel(b, intr->src[1].ssa, 2);
-
-   nir_def *face = nir_umod_imm(b, z, 6);
-   nir_def *layer = nir_udiv_imm(b, z, 6);
-
-   nir_src_rewrite(&intr->src[1], nir_vec4(b, x, y, face, layer));
+   return true;
 }
 
 static bool
@@ -746,28 +733,8 @@ lower_images(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *data)
    case nir_intrinsic_image_load:
    case nir_intrinsic_image_store:
    case nir_intrinsic_bindless_image_load:
-   case nir_intrinsic_bindless_image_store: {
-      switch (nir_intrinsic_image_dim(intr)) {
-      case GLSL_SAMPLER_DIM_1D:
-         lower_1d_image(b, intr);
-         return true;
-
-      case GLSL_SAMPLER_DIM_BUF:
-         lower_buffer_image(b, intr);
-         return true;
-
-      case GLSL_SAMPLER_DIM_CUBE:
-         if (nir_intrinsic_image_array(intr)) {
-            lower_cube_array_image(b, intr);
-            return true;
-         }
-
-         return false;
-
-      default:
-         return false;
-      }
-   }
+   case nir_intrinsic_bindless_image_store:
+      return lower_buffer_image(b, intr) || lower_1d_image(b, intr);
 
    case nir_intrinsic_bindless_image_size:
       nir_def_rewrite_uses(

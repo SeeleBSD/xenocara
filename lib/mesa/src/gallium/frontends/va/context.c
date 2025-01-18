@@ -31,7 +31,6 @@
 #include "util/u_memory.h"
 #include "util/u_handle_table.h"
 #include "util/u_video.h"
-#include "util/set.h"
 #include "vl/vl_deint_filter.h"
 #include "vl/vl_winsys.h"
 
@@ -105,10 +104,6 @@ static struct VADriverVTable vtable =
 #if VA_CHECK_VERSION(1, 15, 0)
    NULL, /* vaSyncSurface2 */
    &vlVaSyncBuffer,
-#endif
-#if VA_CHECK_VERSION(1, 21, 0)
-   NULL, /* vaCopy */
-   &vlVaMapBuffer2,
 #endif
 };
 
@@ -371,8 +366,6 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
       }
    }
 
-   context->surfaces = _mesa_set_create(NULL, _mesa_hash_pointer, _mesa_key_pointer_equal);
-
    mtx_lock(&drv->mutex);
    *context_id = handle_table_add(drv->htab, context);
    mtx_unlock(&drv->mutex);
@@ -399,17 +392,6 @@ vlVaDestroyContext(VADriverContextP ctx, VAContextID context_id)
       mtx_unlock(&drv->mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
-
-   set_foreach(context->surfaces, entry) {
-      vlVaSurface *surf = (vlVaSurface *)entry->key;
-      assert(surf->ctx == context);
-      surf->ctx = NULL;
-      if (surf->fence && context->decoder && context->decoder->destroy_fence) {
-         context->decoder->destroy_fence(context->decoder, surf->fence);
-         surf->fence = NULL;
-      }
-   }
-   _mesa_set_destroy(context->surfaces, NULL);
 
    if (context->decoder) {
       if (context->desc.base.entry_point == PIPE_VIDEO_ENTRYPOINT_ENCODE) {

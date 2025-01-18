@@ -272,14 +272,6 @@ emit_urb_config(struct blorp_batch *batch,
          urb.VSNumberofURBEntries      = entries[i];
       }
    }
-
-   if (batch->blorp->config.use_mesh_shading) {
-#if GFX_VERx10 >= 125
-      blorp_emit(batch, GENX(3DSTATE_URB_ALLOC_MESH), zero);
-      blorp_emit(batch, GENX(3DSTATE_URB_ALLOC_TASK), zero);
-#endif
-   }
-
 #else /* GFX_VER < 7 */
    blorp_emit_urb_config(batch, vs_entry_size, sf_entry_size);
 #endif
@@ -1258,7 +1250,7 @@ blorp_emit_depth_stencil_state(struct blorp_batch *batch,
 
    GENX(3DSTATE_WM_DEPTH_STENCIL_pack)(NULL, dw, &ds);
 
-#if GFX_VERx10 >= 125
+#if INTEL_NEEDS_WA_18019816803
    /* Check if need PSS Stall sync. */
    if (intel_needs_workaround(batch->blorp->compiler->devinfo, 18019816803) &&
        batch->flags & BLORP_BATCH_NEED_PSS_STALL_SYNC) {
@@ -1438,6 +1430,9 @@ blorp_emit_pipeline(struct blorp_batch *batch,
 
    if (batch->blorp->config.use_mesh_shading) {
 #if GFX_VERx10 >= 125
+      blorp_emit(batch, GENX(3DSTATE_URB_ALLOC_MESH), zero);
+      blorp_emit(batch, GENX(3DSTATE_URB_ALLOC_TASK), zero);
+
       blorp_emit(batch, GENX(3DSTATE_MESH_CONTROL), zero);
       blorp_emit(batch, GENX(3DSTATE_TASK_CONTROL), zero);
 #endif
@@ -1628,6 +1623,7 @@ blorp_setup_binding_table(struct blorp_batch *batch,
    uint32_t surface_offsets[2], bind_offset = 0;
    void *surface_maps[2];
 
+   UNUSED bool has_indirect_clear_color = false;
    if (params->use_pre_baked_binding_table) {
       bind_offset = params->pre_baked_binding_table_offset;
    } else {
@@ -1642,6 +1638,8 @@ blorp_setup_binding_table(struct blorp_batch *batch,
                                   surface_maps[BLORP_RENDERBUFFER_BT_INDEX],
                                   surface_offsets[BLORP_RENDERBUFFER_BT_INDEX],
                                   params->color_write_disable, true);
+         if (params->dst.clear_color_addr.buffer != NULL)
+            has_indirect_clear_color = true;
       } else {
          assert(params->depth.enabled || params->stencil.enabled);
          const struct brw_blorp_surface_info *surface =
@@ -1656,6 +1654,8 @@ blorp_setup_binding_table(struct blorp_batch *batch,
                                   surface_maps[BLORP_TEXTURE_BT_INDEX],
                                   surface_offsets[BLORP_TEXTURE_BT_INDEX],
                                   0, false);
+         if (params->src.clear_color_addr.buffer != NULL)
+            has_indirect_clear_color = true;
       }
    }
 
@@ -2257,7 +2257,7 @@ blorp_exec_compute(struct blorp_batch *batch, const struct blorp_params *params)
       .SharedLocalMemorySize = encode_slm_size(GFX_VER,
                                                prog_data->total_shared),
       .BarrierEnable = cs_prog_data->uses_barrier,
-#if GFX_VER >= 8 || GFX_VERx10 == 75
+#if GFX_VER >= 8 || GEN_IS_HASWELL
       .CrossThreadConstantDataReadLength =
          cs_prog_data->push.cross_thread.regs,
 #endif
@@ -2469,7 +2469,7 @@ blorp_xy_block_copy_blt(struct blorp_batch *batch,
          params->dst.view.base_array_layer + params->dst.z_offset;
       blt.DestinationSurfaceQPitch = isl_get_qpitch(dst_surf) >> 2;
       blt.DestinationLOD = params->dst.view.base_level;
-      blt.DestinationMipTailStartLOD = dst_surf->miptail_start_level;
+      blt.DestinationMipTailStartLOD = 15;
       blt.DestinationHorizontalAlign = isl_encode_halign(dst_align.width);
       blt.DestinationVerticalAlign = isl_encode_valign(dst_align.height);
       blt.DestinationDepthStencilResource = false;
@@ -2504,7 +2504,7 @@ blorp_xy_block_copy_blt(struct blorp_batch *batch,
          params->src.view.base_array_layer + params->src.z_offset;
       blt.SourceSurfaceQPitch = isl_get_qpitch(src_surf) >> 2;
       blt.SourceLOD = params->src.view.base_level;
-      blt.SourceMipTailStartLOD = src_surf->miptail_start_level;
+      blt.SourceMipTailStartLOD = 15;
       blt.SourceHorizontalAlign = isl_encode_halign(src_align.width);
       blt.SourceVerticalAlign = isl_encode_valign(src_align.height);
       blt.SourceDepthStencilResource = false;
@@ -2587,7 +2587,7 @@ blorp_xy_fast_color_blit(struct blorp_batch *batch,
          params->dst.view.base_array_layer + params->dst.z_offset;
       blt.DestinationSurfaceQPitch = isl_get_qpitch(dst_surf) >> 2;
       blt.DestinationLOD = params->dst.view.base_level;
-      blt.DestinationMipTailStartLOD = dst_surf->miptail_start_level;
+      blt.DestinationMipTailStartLOD = 15;
       blt.DestinationHorizontalAlign = isl_encode_halign(dst_align.width);
       blt.DestinationVerticalAlign = isl_encode_valign(dst_align.height);
       blt.DestinationDepthStencilResource = false;

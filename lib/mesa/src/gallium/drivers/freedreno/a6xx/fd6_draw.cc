@@ -364,11 +364,9 @@ draw_vbos(struct fd_context *ctx, const struct pipe_draw_info *info,
 
    if (unlikely(ctx->stats_users > 0)) {
       ctx->stats.vs_regs += ir3_shader_halfregs(emit.vs);
-      if (PIPELINE == HAS_TESS_GS) {
-         ctx->stats.hs_regs += COND(emit.hs, ir3_shader_halfregs(emit.hs));
-         ctx->stats.ds_regs += COND(emit.ds, ir3_shader_halfregs(emit.ds));
-         ctx->stats.gs_regs += COND(emit.gs, ir3_shader_halfregs(emit.gs));
-      }
+      ctx->stats.hs_regs += COND(emit.hs, ir3_shader_halfregs(emit.hs));
+      ctx->stats.ds_regs += COND(emit.ds, ir3_shader_halfregs(emit.ds));
+      ctx->stats.gs_regs += COND(emit.gs, ir3_shader_halfregs(emit.gs));
       ctx->stats.fs_regs += ir3_shader_halfregs(emit.fs);
    }
 

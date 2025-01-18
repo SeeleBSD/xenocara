@@ -48,12 +48,9 @@ agx_select_tile_size(unsigned bytes_per_pixel)
 
 struct agx_tilebuffer_layout
 agx_build_tilebuffer_layout(enum pipe_format *formats, uint8_t nr_cbufs,
-                            uint8_t nr_samples, bool layered)
+                            uint8_t nr_samples)
 {
-   struct agx_tilebuffer_layout tib = {
-      .nr_samples = nr_samples,
-      .layered = layered,
-   };
+   struct agx_tilebuffer_layout tib = {.nr_samples = nr_samples};
 
    uint32_t offset_B = 0;
 

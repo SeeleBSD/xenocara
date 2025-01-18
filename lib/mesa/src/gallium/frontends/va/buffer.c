@@ -39,12 +39,6 @@
 #include <va/va_win32.h>
 #endif
 
-#ifndef VA_MAPBUFFER_FLAG_DEFAULT
-#define VA_MAPBUFFER_FLAG_DEFAULT 0
-#define VA_MAPBUFFER_FLAG_READ    1
-#define VA_MAPBUFFER_FLAG_WRITE   2
-#endif
-
 VAStatus
 vlVaCreateBuffer(VADriverContextP ctx, VAContextID context, VABufferType type,
                  unsigned int size, unsigned int num_elements, void *data,
@@ -118,12 +112,6 @@ vlVaBufferSetNumElements(VADriverContextP ctx, VABufferID buf_id,
 VAStatus
 vlVaMapBuffer(VADriverContextP ctx, VABufferID buf_id, void **pbuff)
 {
-   return vlVaMapBuffer2(ctx, buf_id, pbuff, VA_MAPBUFFER_FLAG_DEFAULT);
-}
-
-VAStatus vlVaMapBuffer2(VADriverContextP ctx, VABufferID buf_id,
-                        void **pbuff, uint32_t flags)
-{
    vlVaDriver *drv;
    vlVaBuffer *buf;
 
@@ -147,7 +135,7 @@ VAStatus vlVaMapBuffer2(VADriverContextP ctx, VABufferID buf_id,
    if (buf->derived_surface.resource) {
       struct pipe_resource *resource;
       struct pipe_box box;
-      unsigned usage = 0;
+      unsigned usage;
       void *(*map_func)(struct pipe_context *,
              struct pipe_resource *resource,
              unsigned level,
@@ -166,26 +154,17 @@ VAStatus vlVaMapBuffer2(VADriverContextP ctx, VABufferID buf_id,
       else
          map_func = drv->pipe->texture_map;
 
-      if (flags == VA_MAPBUFFER_FLAG_DEFAULT) {
-         /* For VAImageBufferType, use PIPE_MAP_WRITE for now,
-          * PIPE_MAP_READ_WRITE degradate perf with two copies when map/unmap. */
-         if (buf->type == VAEncCodedBufferType)
-            usage = PIPE_MAP_READ;
-         else
-            usage = PIPE_MAP_WRITE;
-
-         /* Map decoder and postproc surfaces also for reading. */
-         if (buf->derived_surface.entrypoint == PIPE_VIDEO_ENTRYPOINT_BITSTREAM ||
-             buf->derived_surface.entrypoint == PIPE_VIDEO_ENTRYPOINT_PROCESSING)
-            usage |= PIPE_MAP_READ;
+      switch (buf->type) {
+      case VAEncCodedBufferType:
+         usage = PIPE_MAP_READ;
+         break;
+      case VAImageBufferType:
+         usage = PIPE_MAP_READ_WRITE;
+         break;
+      default:
+         usage = PIPE_MAP_WRITE;
+         break;
       }
-
-      if (flags & VA_MAPBUFFER_FLAG_READ)
-         usage |= PIPE_MAP_READ;
-      if (flags & VA_MAPBUFFER_FLAG_WRITE)
-         usage |= PIPE_MAP_WRITE;
-
-      assert(usage);
 
       *pbuff = map_func(drv->pipe, resource, 0, usage,
                         &box, &buf->derived_surface.transfer);
@@ -245,9 +224,6 @@ vlVaUnmapBuffer(VADriverContextP ctx, VABufferID buf_id)
 
       unmap_func(drv->pipe, buf->derived_surface.transfer);
       buf->derived_surface.transfer = NULL;
-
-      if (buf->type == VAImageBufferType)
-         drv->pipe->flush(drv->pipe, NULL, 0);
    }
    mtx_unlock(&drv->mutex);
 

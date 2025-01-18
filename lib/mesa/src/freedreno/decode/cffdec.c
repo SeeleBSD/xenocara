@@ -61,7 +61,7 @@ static int vertices;
 static inline unsigned
 regcnt(void)
 {
-   if (options->info->chip >= 5)
+   if (options->gpu_id >= 500)
       return 0xffff;
    else
       return 0x7fff;
@@ -70,7 +70,7 @@ regcnt(void)
 static int
 is_64b(void)
 {
-   return options->info->chip >= 5;
+   return options->gpu_id >= 500;
 }
 
 static int draws[4];
@@ -448,8 +448,8 @@ disasm_gpuaddr(const char *name, uint64_t gpuaddr, int level)
       uint32_t sizedwords = hostlen(gpuaddr) / 4;
       const char *ext;
 
-      dump_hex(buf, MIN2(64, sizedwords), level + 1);
-      try_disasm_a3xx(buf, sizedwords, level + 2, stdout, options->info->chip * 100);
+      dump_hex(buf, min(64, sizedwords), level + 1);
+      try_disasm_a3xx(buf, sizedwords, level + 2, stdout, options->gpu_id);
 
       /* this is a bit ugly way, but oh well.. */
       if (strstr(name, "SP_VS_OBJ")) {
@@ -779,36 +779,35 @@ cffdec_init(const struct cffdec_options *_options)
    reset_regs();
    draw_count = 0;
 
-   if (!options->info)
-      return;
+   /* TODO we need an API to free/cleanup any previous rnn */
 
-   switch (options->info->chip) {
-   case 2:
+   switch (options->gpu_id) {
+   case 200 ... 299:
       type0_reg = reg_a2xx;
       init_rnn("a2xx");
       break;
-   case 3:
+   case 300 ... 399:
       type0_reg = reg_a3xx;
       init_rnn("a3xx");
       break;
-   case 4:
+   case 400 ... 499:
       type0_reg = reg_a4xx;
       init_rnn("a4xx");
       break;
-   case 5:
+   case 500 ... 599:
       type0_reg = reg_a5xx;
       init_rnn("a5xx");
       break;
-   case 6:
+   case 600 ... 699:
       type0_reg = reg_a6xx;
       init_rnn("a6xx");
       break;
-   case 7:
+   case 700 ... 799:
       type0_reg = reg_a7xx;
       init_rnn("a7xx");
       break;
    default:
-      errx(-1, "unsupported generation: %u", options->info->chip);
+      errx(-1, "unsupported gpu: %u", options->gpu_id);
    }
 }
 
@@ -902,12 +901,12 @@ dump_register_val(struct regacc *r, int level)
        * would be some special annotation in the xml..
        * for a6xx use "address" and "waddress" types
        */
-      if (options->info->chip >= 6) {
+      if (options->gpu_id >= 600) {
          if (!strcmp(info->typeinfo->name, "address") ||
              !strcmp(info->typeinfo->name, "waddress")) {
             gpuaddr = r->value;
          }
-      } else if (options->info->chip >= 5) {
+      } else if (options->gpu_id >= 500) {
          /* TODO we shouldn't rely on reg_val() since reg_set() might
           * not have been called yet for the other half of the 64b reg.
           * We can remove this hack once a5xx.xml is converted to reg64
@@ -1051,7 +1050,7 @@ static bool skip_ib2_enable_local;
 static void
 print_mode(int level)
 {
-   if ((options->info->chip >= 5) && !quiet(2)) {
+   if ((options->gpu_id >= 500) && !quiet(2)) {
       printf("%smode: %s", levels[level], render_mode);
       if (thread)
          printf(":%s", thread);
@@ -1100,7 +1099,7 @@ __do_query(const char *primtype, uint32_t num_indices)
 {
    int n = 0;
 
-   if ((5 <= options->info->chip) && (options->info->chip < 7)) {
+   if ((500 <= options->gpu_id) && (options->gpu_id < 700)) {
       uint32_t scissor_tl = reg_val(regbase("GRAS_SC_WINDOW_SCISSOR_TL"));
       uint32_t scissor_br = reg_val(regbase("GRAS_SC_WINDOW_SCISSOR_BR"));
 
@@ -1124,7 +1123,7 @@ __do_query(const char *primtype, uint32_t num_indices)
 
       printf("%4d: %s(%u,%u-%u,%u):%u:", draw_count, primtype, bin_x1,
              bin_y1, bin_x2, bin_y2, num_indices);
-      if (options->info->chip >= 5)
+      if (options->gpu_id >= 500)
          printf("%s:", render_mode);
       if (thread)
          printf("%s:", thread);
@@ -1443,19 +1442,19 @@ dump_tex_samp(uint32_t *texsamp, enum state_src_t src, int num_unit, int level)
       if ((num_unit == 16) && (texsamp[0] == 0) && (texsamp[1] == 0))
          break;
 
-      if (options->info->chip == 3) {
+      if ((300 <= options->gpu_id) && (options->gpu_id < 400)) {
          dump_domain(texsamp, 2, level + 2, "A3XX_TEX_SAMP");
          dump_hex(texsamp, 2, level + 1);
          texsamp += 2;
-      } else if (options->info->chip == 4) {
+      } else if ((400 <= options->gpu_id) && (options->gpu_id < 500)) {
          dump_domain(texsamp, 2, level + 2, "A4XX_TEX_SAMP");
          dump_hex(texsamp, 2, level + 1);
          texsamp += 2;
-      } else if (options->info->chip == 5) {
+      } else if ((500 <= options->gpu_id) && (options->gpu_id < 600)) {
          dump_domain(texsamp, 4, level + 2, "A5XX_TEX_SAMP");
          dump_hex(texsamp, 4, level + 1);
          texsamp += 4;
-      } else if ((6 <= options->info->chip) && (options->info->chip < 8)) {
+      } else if ((600 <= options->gpu_id) && (options->gpu_id < 800)) {
          dump_domain(texsamp, 4, level + 2, "A6XX_TEX_SAMP");
          dump_hex(texsamp, 4, level + 1);
          texsamp += src == STATE_SRC_BINDLESS ? 16 : 4;
@@ -1474,11 +1473,11 @@ dump_tex_const(uint32_t *texconst, int num_unit, int level)
           (texconst[2] == 0) && (texconst[3] == 0))
          break;
 
-      if (options->info->chip == 3) {
+      if ((300 <= options->gpu_id) && (options->gpu_id < 400)) {
          dump_domain(texconst, 4, level + 2, "A3XX_TEX_CONST");
          dump_hex(texconst, 4, level + 1);
          texconst += 4;
-      } else if (options->info->chip == 4) {
+      } else if ((400 <= options->gpu_id) && (options->gpu_id < 500)) {
          dump_domain(texconst, 8, level + 2, "A4XX_TEX_CONST");
          if (options->dump_textures) {
             uint32_t addr = texconst[4] & ~0x1f;
@@ -1486,7 +1485,7 @@ dump_tex_const(uint32_t *texconst, int num_unit, int level)
          }
          dump_hex(texconst, 8, level + 1);
          texconst += 8;
-      } else if (options->info->chip == 5) {
+      } else if ((500 <= options->gpu_id) && (options->gpu_id < 600)) {
          dump_domain(texconst, 12, level + 2, "A5XX_TEX_CONST");
          if (options->dump_textures) {
             uint64_t addr =
@@ -1495,7 +1494,7 @@ dump_tex_const(uint32_t *texconst, int num_unit, int level)
          }
          dump_hex(texconst, 12, level + 1);
          texconst += 12;
-      } else if ((6 <= options->info->chip) && (options->info->chip < 8)) {
+      } else if ((600 <= options->gpu_id) && (options->gpu_id < 800)) {
          dump_domain(texconst, 16, level + 2, "A6XX_TEX_CONST");
          if (options->dump_textures) {
             uint64_t addr =
@@ -1522,9 +1521,9 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
    if (quiet(2) && !options->script)
       return;
 
-   if (options->info->chip >= 6)
+   if (options->gpu_id >= 600)
       a6xx_get_state_type(dwords, &stage, &state, &src);
-   else if (options->info->chip >= 4)
+   else if (options->gpu_id >= 400)
       a4xx_get_state_type(dwords, &stage, &state, &src);
    else
       a3xx_get_state_type(dwords, &stage, &state, &src);
@@ -1576,9 +1575,9 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
       if (quiet(2))
          return;
 
-      if (options->info->chip >= 4)
+      if (options->gpu_id >= 400)
          num_unit *= 16;
-      else if (options->info->chip >= 3)
+      else if (options->gpu_id >= 300)
          num_unit *= 4;
 
       /* shaders:
@@ -1598,7 +1597,7 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
 
       if (contents)
          try_disasm_a3xx(contents, num_unit * 2, level + 2, stdout,
-                         options->info->chip * 100);
+                         options->gpu_id);
 
       /* dump raw shader: */
       if (ext)
@@ -1615,7 +1614,7 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
        * note: num_unit seems to be # of pairs of dwords??
        */
 
-      if (options->info->chip >= 4)
+      if (options->gpu_id >= 400)
          num_unit *= 2;
 
       dump_float(contents, num_unit * 2, level + 1);
@@ -1653,11 +1652,11 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
 
       for (i = 0; i < num_unit; i++) {
          int sz = 4;
-         if (options->info->chip == 4) {
+         if (400 <= options->gpu_id && options->gpu_id < 500) {
             dump_domain(ssboconst, 4, level + 2, "A4XX_SSBO_0");
-         } else if (options->info->chip == 5) {
+         } else if (500 <= options->gpu_id && options->gpu_id < 600) {
             dump_domain(ssboconst, 4, level + 2, "A5XX_SSBO_0");
-         } else if ((6 <= options->info->chip) && (options->info->chip < 8)) {
+         } else if (600 <= options->gpu_id && options->gpu_id < 800) {
             sz = 16;
             dump_domain(ssboconst, 16, level + 2, "A6XX_TEX_CONST");
          }
@@ -1670,9 +1669,9 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
       uint32_t *ssboconst = (uint32_t *)contents;
 
       for (i = 0; i < num_unit; i++) {
-         if (options->info->chip == 4)
+         if (400 <= options->gpu_id && options->gpu_id < 500)
             dump_domain(ssboconst, 2, level + 2, "A4XX_SSBO_1");
-         else if (options->info->chip == 5)
+         else if (500 <= options->gpu_id && options->gpu_id < 600)
             dump_domain(ssboconst, 2, level + 2, "A5XX_SSBO_1");
          dump_hex(ssboconst, 2, level + 1);
          ssboconst += 2;
@@ -1684,7 +1683,7 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
 
       for (i = 0; i < num_unit; i++) {
          /* TODO a4xx and a5xx might be same: */
-         if (options->info->chip == 5) {
+         if ((500 <= options->gpu_id) && (options->gpu_id < 600)) {
             dump_domain(ssboconst, 2, level + 2, "A5XX_SSBO_2");
             dump_hex(ssboconst, 2, level + 1);
          }
@@ -1702,9 +1701,9 @@ cp_load_state(uint32_t *dwords, uint32_t sizedwords, int level)
 
       for (i = 0; i < num_unit; i++) {
          // TODO probably similar on a4xx..
-         if (options->info->chip == 5)
+         if (500 <= options->gpu_id && options->gpu_id < 600)
             dump_domain(uboconst, 2, level + 2, "A5XX_UBO");
-         else if (options->info->chip == 6)
+         else if (600 <= options->gpu_id && options->gpu_id < 700)
             dump_domain(uboconst, 2, level + 2, "A6XX_UBO");
          dump_hex(uboconst, 2, level + 1);
          uboconst += src == STATE_SRC_BINDLESS ? 16 : 2;
@@ -1835,11 +1834,11 @@ dump_a2xx_shader_const(uint32_t *dwords, uint32_t sizedwords, uint32_t val,
                 size, fmt);
          // TODO maybe dump these as bytes instead of dwords?
          size = (size + 3) / 4; // for now convert to dwords
-         dump_hex(addr, MIN2(size, 64), level + 1);
-         if (size > MIN2(size, 64))
+         dump_hex(addr, min(size, 64), level + 1);
+         if (size > min(size, 64))
             printf("%s\t\t...\n", levels[level + 1]);
-         dump_float(addr, MIN2(size, 64), level + 1);
-         if (size > MIN2(size, 64))
+         dump_float(addr, min(size, 64), level + 1);
+         if (size > min(size, 64))
             printf("%s\t\t...\n", levels[level + 1]);
       }
    }
@@ -1903,7 +1902,7 @@ cp_event_write(uint32_t *dwords, uint32_t sizedwords, int level)
    const char *name = rnn_enumname(rnn, "vgt_event_type", dwords[0]);
    printl(2, "%sevent %s\n", levels[level], name);
 
-   if (name && (options->info->chip > 5)) {
+   if (name && (options->gpu_id > 500)) {
       char eventname[64];
       snprintf(eventname, sizeof(eventname), "EVENT:%s", name);
       if (!strcmp(name, "BLIT")) {
@@ -2179,13 +2178,13 @@ cp_draw_indirect_multi(uint32_t *dwords, uint32_t sizedwords, int level)
          printf("%sindirect count: %u\n", levels[level], *buf);
          if (*buf == 0 || *buf > max_indirect_draw_count) {
             /* garbage value */
-            count = MIN2(count, max_draw_count);
+            count = min(count, max_draw_count);
          } else {
             /* not garbage */
-            count = MIN2(count, *buf);
+            count = min(count, *buf);
          }
       } else {
-         count = MIN2(count, max_draw_count);
+         count = min(count, max_draw_count);
       }
    }
 
@@ -2533,7 +2532,7 @@ load_group(unsigned group_id, int level)
    printl(2, "%saddr: %016llx\n", levels[level], ds->addr);
    printl(2, "%sflags: %x\n", levels[level], ds->flags);
 
-   if (options->info->chip >= 6) {
+   if (options->gpu_id >= 600) {
       printl(2, "%senable_mask: 0x%x\n", levels[level], ds->enable_mask);
 
       if (!(ds->enable_mask & enable_mask)) {
@@ -2718,7 +2717,7 @@ cp_set_render_mode(uint32_t *dwords, uint32_t sizedwords, int level)
     *
     */
 
-   assert(options->info->chip >= 5);
+   assert(options->gpu_id >= 500);
 
    render_mode = rnn_enumname(rnn, "render_mode_cmd", dwords[0]);
 
@@ -2763,7 +2762,7 @@ cp_compute_checkpoint(uint32_t *dwords, uint32_t sizedwords, int level)
    uint32_t *ptr, len;
 
    assert(is_64b());
-   assert(options->info->chip >= 5);
+   assert(options->gpu_id >= 500);
 
    if (sizedwords == 8) {
       addr = dwords[5];
@@ -3054,7 +3053,7 @@ dump_commands(uint32_t *dwords, uint32_t sizedwords, int level)
          printf("bad type! %08x\n", dwords[0]);
          /* for 5xx+ we can do a passable job of looking for start of next valid
           * packet: */
-         if (options->info->chip >= 5) {
+         if (options->gpu_id >= 500) {
             count = find_next_packet(dwords, dwords_left);
          } else {
             return;

@@ -87,7 +87,7 @@ static void init_prog(struct program *p)
 	ASSERTED int ret;
 
 	/* find a hardware device */
-	ret = pipe_loader_probe(&p->dev, 1, false);
+	ret = pipe_loader_probe(&p->dev, 1);
 	assert(ret);
 
 	/* init a pipe screen */

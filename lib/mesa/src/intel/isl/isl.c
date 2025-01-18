@@ -1003,15 +1003,6 @@ isl_surf_choose_tiling(const struct isl_device *dev,
       CHOOSE(ISL_TILING_LINEAR);
    }
 
-   /* For sparse images, prefer the formats that use the standard block
-    * shapes.
-    */
-   if (info->usage & ISL_SURF_USAGE_SPARSE_BIT) {
-      CHOOSE(ISL_TILING_64);
-      CHOOSE(ISL_TILING_ICL_Ys);
-      CHOOSE(ISL_TILING_SKL_Ys);
-   }
-
    /* Choose suggested 4K tilings first, then 64K tilings:
     *
     * Then following quotes can be found in the SKL PRMs,
@@ -2463,34 +2454,42 @@ isl_calc_size(const struct isl_device *dev,
                row_pitch_B;
    }
 
-   /* If for some reason we can't support the appropriate tiling format and
-    * end up falling to linear or some other format, make sure the image size
-    * and alignment are aligned to the expected block size so we can at least
-    * do opaque binds.
-    */
-   if (info->usage & ISL_SURF_USAGE_SPARSE_BIT)
-      size_B = isl_align(size_B, 64 * 1024);
-
-   /* Pre-gfx9: from the Broadwell PRM Vol 5, Surface Layout:
-    *    "In addition to restrictions on maximum height, width, and depth,
-    *     surfaces are also restricted to a maximum size in bytes. This
-    *     maximum is 2 GB for all products and all surface types."
-    *
-    * gfx9-10: from the Skylake PRM Vol 5, Maximum Surface Size in Bytes:
-    *    "In addition to restrictions on maximum height, width, and depth,
-    *     surfaces are also restricted to a maximum size of 2^38 bytes.
-    *     All pixels within the surface must be contained within 2^38 bytes
-    *     of the base address."
-    *
-    * gfx11+ platforms raised this limit to 2^44 bytes.
-    */
-   uint64_t max_surface_B = 1ull << (ISL_GFX_VER(dev) >= 11 ? 44 :
-                                     ISL_GFX_VER(dev) >= 9 ? 38 : 31);
-   if (size_B > max_surface_B) {
-      return notify_failure(
-         info,
-         "calculated size (%"PRIu64"B) exceeds platform limit of %"PRIu64"B",
-         size_B, max_surface_B);
+   if (ISL_GFX_VER(dev) < 9) {
+      /* From the Broadwell PRM Vol 5, Surface Layout:
+       *
+       *    "In addition to restrictions on maximum height, width, and depth,
+       *     surfaces are also restricted to a maximum size in bytes. This
+       *     maximum is 2 GB for all products and all surface types."
+       *
+       * This comment is applicable to all Pre-gfx9 platforms.
+       */
+      if (size_B > (uint64_t) 1 << 31) {
+         return notify_failure(
+            info,
+            "calculated size (%"PRIu64"B) exceeds platform limit of (1 << 31)",
+            size_B);
+      }
+   } else if (ISL_GFX_VER(dev) < 11) {
+      /* From the Skylake PRM Vol 5, Maximum Surface Size in Bytes:
+       *    "In addition to restrictions on maximum height, width, and depth,
+       *     surfaces are also restricted to a maximum size of 2^38 bytes.
+       *     All pixels within the surface must be contained within 2^38 bytes
+       *     of the base address."
+       */
+      if (size_B > (uint64_t) 1 << 38) {
+         return notify_failure(
+            info,
+            "calculated size (%"PRIu64"B) exceeds platform limit of (1 << 38)",
+            size_B);
+      }
+   } else {
+      /* gfx11+ platforms raised this limit to 2^44 bytes. */
+      if (size_B > (uint64_t) 1 << 44) {
+         return notify_failure(
+            info,
+            "calculated size (%"PRIu64"B) exceeds platform limit of (1 << 44)",
+            size_B);
+      }
    }
 
    *out_size_B = size_B;
@@ -2548,52 +2547,21 @@ isl_calc_base_alignment(const struct isl_device *dev,
       if (tile_info->tiling == ISL_TILING_GFX12_CCS)
          base_alignment_B = MAX(base_alignment_B, 4096);
 
+      /* Platforms using an aux map require that images be granularity-aligned
+       * if they're going to used with CCS. This is because the Aux
+       * translation table maps main surface addresses to aux addresses at a
+       * granularity in the main surface. Because we don't know for sure in
+       * ISL if a surface will use CCS, we have to guess based on the
+       * DISABLE_AUX usage bit. The one thing we do know is that we haven't
+       * enable CCS on linear images yet so we can avoid the extra alignment
+       * there.
+       */
       if (dev->info->has_aux_map &&
           !(info->usage & ISL_SURF_USAGE_DISABLE_AUX_BIT)) {
-         /* Wa_22015614752:
-          *
-          * Due to L3 cache being tagged with (engineID, vaID) and the CCS
-          * block/cacheline being 256 bytes, 2 engines accessing a 64Kb range
-          * with compression will generate 2 different CCS cacheline entries
-          * in L3, this will lead to corruptions. To avoid this, we need to
-          * ensure 2 images do not share a 256 bytes CCS cacheline. With a
-          * ratio of compression of 1/256, this is 64Kb alignment (even for
-          * Tile4...)
-          *
-          * ATS-M PRMS, Vol 2a: Command Reference: Instructions,
-          * XY_CTRL_SURF_COPY_BLT, "Size of Control Surface Copy" field, the
-          * CCS blocks are 256 bytes :
-          *
-          *    "This field indicates size of the Control Surface or CCS copy.
-          *     It is expressed in terms of number of 256B block of CCS, where
-          *     each 256B block of CCS corresponds to 64KB of main surface."
-          */
-         if (intel_needs_workaround(dev->info, 22015614752)) {
-            base_alignment_B = MAX(base_alignment_B,
-                                   256 /* cacheline */ * 256 /* AUX ratio */);
-         }
-
-         /* Platforms using an aux map require that images be
-          * granularity-aligned if they're going to used with CCS. This is
-          * because the Aux translation table maps main surface addresses to
-          * aux addresses at a granularity in the main surface. Because we
-          * don't know for sure in ISL if a surface will use CCS, we have to
-          * guess based on the DISABLE_AUX usage bit. The one thing we do know
-          * is that we haven't enable CCS on linear images yet so we can avoid
-          * the extra alignment there.
-          */
          base_alignment_B = MAX(base_alignment_B, dev->info->verx10 >= 125 ?
-                                1024 * 1024 : 64 * 1024);
+               1024 * 1024 : 64 * 1024);
       }
    }
-
-   /* If for some reason we can't support the appropriate tiling format and
-    * end up falling to linear or some other format, make sure the image size
-    * and alignment are aligned to the expected block size so we can at least
-    * do opaque binds.
-    */
-   if (info->usage & ISL_SURF_USAGE_SPARSE_BIT)
-      base_alignment_B = MAX(base_alignment_B, 64 * 1024);
 
    return base_alignment_B;
 }
@@ -2795,13 +2763,6 @@ isl_surf_get_mcs_surf(const struct isl_device *dev,
 
    /* We are seeing failures with mcs on dg2, so disable it for now. */
    if (intel_device_info_is_dg2(dev->info))
-      return false;
-
-   /* On Gfx12+ this format is not listed in TGL PRMs, Volume 2b: Command
-    * Reference: Enumerations, RenderCompressionFormat
-    */
-   if (ISL_GFX_VER(dev) >= 12 &&
-       surf->format == ISL_FORMAT_R9G9B9E5_SHAREDEXP)
       return false;
 
    /* The following are true of all multisampled surfaces */
@@ -3153,9 +3114,6 @@ isl_surf_get_ccs_surf(const struct isl_device *dev,
       break;                                       \
    case 125:                                       \
       isl_gfx125_##func(__VA_ARGS__);              \
-      break;                                       \
-   case 200:                                       \
-      isl_gfx20_##func(__VA_ARGS__);               \
       break;                                       \
    default:                                        \
       assert(!"Unknown hardware generation");      \

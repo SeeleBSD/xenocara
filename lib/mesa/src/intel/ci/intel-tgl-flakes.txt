@@ -5,4 +5,3 @@ gl_typefacestyles
 gles_androidblendmodes
 gles_arithmode
 gles_localmatriximagefilter
-vk_crbug_899512

@@ -348,7 +348,6 @@ anv_image_init_from_gralloc(struct anv_device *device,
     *
     */
    result = anv_device_import_bo(device, dma_buf,
-                                 ANV_BO_ALLOC_EXTERNAL |
                                  ANV_BO_ALLOC_IMPLICIT_SYNC |
                                  ANV_BO_ALLOC_IMPLICIT_WRITE,
                                  0 /* client_address */,
@@ -432,7 +431,6 @@ anv_image_bind_from_gralloc(struct anv_device *device,
     */
    struct anv_bo *bo = NULL;
    VkResult result = anv_device_import_bo(device, dma_buf,
-                                          ANV_BO_ALLOC_EXTERNAL |
                                           ANV_BO_ALLOC_IMPLICIT_SYNC |
                                           ANV_BO_ALLOC_IMPLICIT_WRITE,
                                           0 /* client_address */,
@@ -572,8 +570,7 @@ VkResult anv_GetSwapchainGrallocUsage2ANDROID(
 
    *grallocConsumerUsage = 0;
    *grallocProducerUsage = 0;
-   mesa_logd("%s: format=%d, usage=0x%x, swapchainUsage=0x%x", __func__, format,
-             imageUsage, swapchainImageUsage);
+   mesa_logd("%s: format=%d, usage=0x%x", __func__, format, imageUsage);
 
    result = format_supported_with_usage(device_h, format, imageUsage);
    if (result != VK_SUCCESS)
@@ -600,13 +597,6 @@ VkResult anv_GetSwapchainGrallocUsage2ANDROID(
                        GRALLOC_USAGE_EXTERNAL_DISP)) {
       *grallocProducerUsage |= GRALLOC1_PRODUCER_USAGE_GPU_RENDER_TARGET;
       *grallocConsumerUsage |= GRALLOC1_CONSUMER_USAGE_HWCOMPOSER;
-   }
-
-   if ((swapchainImageUsage & VK_SWAPCHAIN_IMAGE_USAGE_SHARED_BIT_ANDROID) &&
-       device->u_gralloc != NULL) {
-      uint64_t front_rendering_usage = 0;
-      u_gralloc_get_front_rendering_usage(device->u_gralloc, &front_rendering_usage);
-      *grallocProducerUsage |= front_rendering_usage;
    }
 
    return VK_SUCCESS;

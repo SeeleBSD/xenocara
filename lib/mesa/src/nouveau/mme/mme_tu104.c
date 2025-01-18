@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd.
- * SPDX-License-Identifier: MIT
- */
 #include "mme_tu104.h"
 #include "mme_tu104_encode.h"
 

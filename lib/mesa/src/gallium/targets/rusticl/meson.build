@@ -56,7 +56,6 @@ librusticl = shared_library(
     driver_panfrost,
     driver_radeonsi,
     driver_swrast,
-    driver_zink,
     idep_nir,
     idep_vtn,
   ],
@@ -77,7 +76,6 @@ configure_file(
   input : 'rusticl.icd.in',
   output : 'rusticl.icd',
   install : true,
-  install_tag : 'runtime',
   install_dir : join_paths(get_option('sysconfdir'), 'OpenCL', 'vendors'),
 )
 

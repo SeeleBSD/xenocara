@@ -287,9 +287,6 @@ LiveRangeInstrVisitor::visit(TexInstr *instr)
 
    if (instr->resource_offset())
       record_read(NO_ALU_BLOCK, instr->resource_offset(), LiveRangeEntry::use_unspecified);
-
-   if (instr->sampler_offset())
-      record_read(NO_ALU_BLOCK, instr->sampler_offset(), LiveRangeEntry::use_unspecified);
 }
 
 void

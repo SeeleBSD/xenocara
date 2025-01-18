@@ -425,7 +425,7 @@ vec_dest_has_swizzle(nir_alu_instr *vec, nir_def *ssa)
 
    /* don't deal with possible bypassed vec/mov chain */
    nir_foreach_use(use_src, ssa) {
-      nir_instr *instr = nir_src_parent_instr(use_src);
+      nir_instr *instr = use_src->parent_instr;
       if (instr->type != nir_instr_type_alu)
          continue;
 
@@ -706,7 +706,7 @@ insert_vec_mov(nir_alu_instr *vec, unsigned start_idx, nir_shader *shader)
    unsigned write_mask = (1u << start_idx);
 
    nir_alu_instr *mov = nir_alu_instr_create(shader, nir_op_mov);
-   nir_alu_src_copy(&mov->src[0], &vec->src[start_idx]);
+   nir_alu_src_copy(&mov->src[0], &vec->src[start_idx], mov);
 
    mov->src[0].swizzle[0] = vec->src[start_idx].swizzle[0];
 
@@ -900,7 +900,7 @@ lower_alu(struct etna_compile *c, nir_alu_instr *alu)
       /* check that vecN instruction is only user of this */
       bool need_mov = false;
       nir_foreach_use_including_if(use_src, ssa) {
-         if (nir_src_is_if(use_src) || nir_src_parent_instr(use_src) != &alu->instr)
+         if (use_src->is_if || use_src->parent_instr != &alu->instr)
             need_mov = true;
       }
 
@@ -1211,7 +1211,7 @@ etna_compile_shader(struct etna_shader_variant *v)
    NIR_PASS_V(s, nir_remove_dead_variables, nir_var_function_temp, NULL);
    NIR_PASS_V(s, nir_opt_algebraic_late);
 
-   NIR_PASS_V(s, nir_move_vec_src_uses_to_dest, false);
+   NIR_PASS_V(s, nir_move_vec_src_uses_to_dest);
    NIR_PASS_V(s, nir_copy_prop);
    /* need copy prop after uses_to_dest, and before src mods: see
     * dEQP-GLES2.functional.shaders.random.all_features.fragment.95

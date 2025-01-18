@@ -114,10 +114,6 @@ pub struct NirPrintfInfo {
     printf_info: *mut u_printf_info,
 }
 
-// SAFETY: `u_printf_info` is considered immutable
-unsafe impl Send for NirPrintfInfo {}
-unsafe impl Sync for NirPrintfInfo {}
-
 impl NirPrintfInfo {
     pub fn u_printf(&self, buf: &[u8]) {
         unsafe {
@@ -143,12 +139,6 @@ impl Drop for NirPrintfInfo {
 pub struct NirShader {
     nir: NonNull<nir_shader>,
 }
-
-// SAFETY: It's safe to share a nir_shader between threads.
-unsafe impl Send for NirShader {}
-
-// SAFETY: We do not allow interior mutability with &NirShader
-unsafe impl Sync for NirShader {}
 
 impl NirShader {
     pub fn new(nir: *mut nir_shader) -> Option<Self> {
@@ -194,7 +184,7 @@ impl NirShader {
         unsafe { nir_shader_clone(ptr::null_mut(), self.nir.as_ptr()) }
     }
 
-    pub fn sweep_mem(&mut self) {
+    pub fn sweep_mem(&self) {
         unsafe { nir_sweep(self.nir.as_ptr()) }
     }
 
@@ -249,7 +239,7 @@ impl NirShader {
         unsafe { should_print_nir(self.nir.as_ptr()) }
     }
 
-    pub fn validate_serialize_deserialize(&mut self) {
+    pub fn validate_serialize_deserialize(&self) {
         unsafe { nir_shader_serialize_deserialize(self.nir.as_ptr()) }
     }
 
@@ -277,7 +267,7 @@ impl NirShader {
             nir_variable_mode::nir_var_function_temp,
         );
         nir_pass!(self, nir_lower_returns);
-        nir_pass!(self, nir_link_shader_functions, libclc.nir.as_ptr());
+        nir_pass!(self, nir_lower_libclc, libclc.nir.as_ptr());
         nir_pass!(self, nir_inline_functions);
     }
 
@@ -287,10 +277,6 @@ impl NirShader {
 
     pub fn remove_non_entrypoints(&mut self) {
         unsafe { nir_remove_non_entrypoints(self.nir.as_ptr()) };
-    }
-
-    pub fn cleanup_functions(&mut self) {
-        unsafe { nir_cleanup_functions(self.nir.as_ptr()) };
     }
 
     pub fn variables(&mut self) -> ExecListIter<nir_variable> {
@@ -308,7 +294,7 @@ impl NirShader {
         unsafe { (*self.nir.as_ptr()).info.num_textures }
     }
 
-    pub fn reset_scratch_size(&mut self) {
+    pub fn reset_scratch_size(&self) {
         unsafe {
             (*self.nir.as_ptr()).scratch_size = 0;
         }
@@ -347,7 +333,7 @@ impl NirShader {
         unsafe { (*self.nir.as_ptr()).info.num_subgroups }
     }
 
-    pub fn set_workgroup_size_variable_if_zero(&mut self) {
+    pub fn set_workgroup_size_variable_if_zero(&self) {
         let nir = self.nir.as_ptr();
         unsafe {
             (*nir)
@@ -375,7 +361,7 @@ impl NirShader {
             .filter(move |v| v.data.mode() & mode.0 != 0)
     }
 
-    pub fn extract_constant_initializers(&mut self) {
+    pub fn extract_constant_initializers(&self) {
         let nir = self.nir.as_ptr();
         unsafe {
             if (*nir).constant_data_size > 0 {
@@ -442,16 +428,7 @@ impl NirShader {
     pub fn preserve_fp16_denorms(&mut self) {
         unsafe {
             self.nir.as_mut().info.float_controls_execution_mode |=
-                float_controls::FLOAT_CONTROLS_DENORM_PRESERVE_FP16 as u32;
-        }
-    }
-
-    pub fn set_fp_rounding_mode_rtne(&mut self) {
-        unsafe {
-            self.nir.as_mut().info.float_controls_execution_mode |=
-                float_controls::FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP16 as u32
-                    | float_controls::FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP32 as u32
-                    | float_controls::FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP64 as u32;
+                float_controls::FLOAT_CONTROLS_DENORM_PRESERVE_FP16 as u16;
         }
     }
 
@@ -461,16 +438,17 @@ impl NirShader {
     }
 
     pub fn add_var(
-        &mut self,
+        &self,
         mode: nir_variable_mode,
         glsl_type: *const glsl_type,
         loc: usize,
         name: &str,
-    ) {
+    ) -> *mut nir_variable {
         let name = CString::new(name).unwrap();
         unsafe {
             let var = nir_variable_create(self.nir.as_ptr(), mode, glsl_type, name.as_ptr());
             (*var).data.location = loc.try_into().unwrap();
+            var
         }
     }
 }

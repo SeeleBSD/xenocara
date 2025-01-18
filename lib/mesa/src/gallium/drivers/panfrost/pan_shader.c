@@ -369,8 +369,7 @@ panfrost_create_shader_state(struct pipe_context *pctx,
    if (nir->info.stage == MESA_SHADER_FRAGMENT &&
        nir->info.outputs_written & BITFIELD_BIT(FRAG_RESULT_COLOR)) {
 
-      NIR_PASS_V(nir, nir_lower_fragcolor,
-                 nir->info.fs.color_is_dual_source ? 1 : 8);
+      NIR_PASS_V(nir, nir_lower_fragcolor, 8);
       so->fragcolor_lowered = true;
    }
 
@@ -471,7 +470,6 @@ panfrost_create_compute_state(struct pipe_context *pctx,
    /* The NIR becomes invalid after this. For compute kernels, we never
     * need to access it again. Don't keep a dangling pointer around.
     */
-   ralloc_free((void *)so->nir);
    so->nir = NULL;
 
    return so;

@@ -69,7 +69,6 @@ if with_tests
       c_args : [c_msvc_compat_args, no_override_init_args],
       gnu_symbol_visibility : 'hidden',
       include_directories : [inc_include, inc_src, inc_mesa],
-      dependencies: [idep_valhall_enums_h],
       link_with : [libpanfrost_valhall_disasm],
     ),
     suite : ['panfrost'],

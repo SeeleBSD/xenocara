@@ -360,10 +360,6 @@ init_gallivm_state(struct gallivm_state *gallivm, const char *name,
    lp_set_module_stack_alignment_override(gallivm->module, 4);
 #endif
 
-#if DETECT_ARCH_AARCH64
-   lp_set_module_branch_protection(gallivm->module);
-#endif
-
    gallivm->builder = LLVMCreateBuilderInContext(gallivm->context);
    if (!gallivm->builder)
       goto fail;
@@ -613,11 +609,7 @@ gallivm_compile_module(struct gallivm_state *gallivm)
    LLVMRunPasses(gallivm->module, passes, LLVMGetExecutionEngineTargetMachine(gallivm->engine), opts);
 
    if (!(gallivm_perf & GALLIVM_PERF_NO_OPT))
-#if LLVM_VERSION_MAJOR >= 18
-      strcpy(passes, "sroa,early-cse,simplifycfg,reassociate,mem2reg,instsimplify,instcombine<no-verify-fixpoint>");
-#else
       strcpy(passes, "sroa,early-cse,simplifycfg,reassociate,mem2reg,instsimplify,instcombine");
-#endif
    else
       strcpy(passes, "mem2reg");
 

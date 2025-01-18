@@ -39,7 +39,6 @@
 #define U_DEBUG_H_
 
 #include <stdarg.h>
-#include <stdlib.h>
 #include <string.h>
 #if !defined(_WIN32)
 #include <sys/types.h>
@@ -395,23 +394,14 @@ debug_get_option_ ## suffix (void) \
 }
 
 static inline bool
-__normal_user(void)
+__check_suid(void)
 {
-#if defined(_WIN32)
-   return true;
-#else
-   return issetugid() == 0 && geteuid() == getuid() && getegid() == getgid();
+#if !defined(_WIN32)
+   if (geteuid() != getuid())
+      return true;
 #endif
+   return false;
 }
-
-#ifndef HAVE_SECURE_GETENV
-static inline char *secure_getenv(const char *name)
-{
-   if (issetugid())
-      return NULL;
-   return getenv(name);
-}
-#endif
 
 #define DEBUG_GET_ONCE_BOOL_OPTION(sufix, name, dfault) \
 static bool \

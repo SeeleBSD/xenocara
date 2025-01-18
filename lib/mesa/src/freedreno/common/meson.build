@@ -22,11 +22,7 @@ freedreno_devices_h = custom_target(
   'freedreno_devices.h',
   input: 'freedreno_devices.py',
   output: 'freedreno_devices.h',
-  command: [
-    prog_python, '@INPUT@',
-    '-p', join_paths(meson.project_build_root(), 'src/freedreno/registers/adreno/')
-  ],
-  depends: freedreno_py_header_files,
+  command: [prog_python, '@INPUT@'],
   capture: true,
 )
 
@@ -43,7 +39,6 @@ libfreedreno_common = static_library(
     'freedreno_guardband.h',
     freedreno_devices_h,
     sha1_h,
-    'redump.h'
   ],
   include_directories : [inc_freedreno, inc_include, inc_src],
   c_args : [no_override_init_args],

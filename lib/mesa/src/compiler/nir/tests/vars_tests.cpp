@@ -90,13 +90,13 @@ protected:
 
    nir_deref_instr *get_deref(nir_deref_type deref_type,
                               unsigned index);
-   linear_ctx *lin_ctx;
+   void *lin_ctx;
 };
 
 nir_vars_test::nir_vars_test()
    : nir_test::nir_test("nir_vars_test")
 {
-   lin_ctx = linear_context(b->shader);
+   lin_ctx = linear_alloc_parent(b->shader, 0);
 }
 
 nir_vars_test::~nir_vars_test()

@@ -14,8 +14,6 @@
 #include "util/u_prim.h"
 #include "util/u_upload_mgr.h"
 #include "ac_rtld.h"
-#include "si_build_pm4.h"
-#include "si_tracepoints.h"
 
 #if (GFX_VER == 6)
 #define GFX(name) name##GFX6
@@ -31,8 +29,6 @@
 #define GFX(name) name##GFX10_3
 #elif (GFX_VER == 11)
 #define GFX(name) name##GFX11
-#elif (GFX_VER == 115)
-#define GFX(name) name##GFX11_5
 #else
 #error "Unknown gfx level"
 #endif
@@ -370,8 +366,9 @@ static bool si_update_shaders(struct si_context *sctx)
 
                   struct si_pm4_state *pm4 = &shader->pm4;
 
-                  uint64_t va_low = (pipeline->bo->gpu_address + pipeline->offset[i]) >> 8;
-                  uint32_t reg = pm4->spi_shader_pgm_lo_reg;
+                  uint32_t va_low = (pipeline->bo->gpu_address + pipeline->offset[i]) >> 8;
+                  assert(PKT3_IT_OPCODE_G(pm4->pm4[pm4->reg_va_low_idx - 2]) == PKT3_SET_SH_REG);
+                  uint32_t reg = (pm4->pm4[pm4->reg_va_low_idx - 1] << 2) + SI_SH_REG_OFFSET;
                   si_pm4_set_reg(&pipeline->pm4, reg, va_low);
                }
             }
@@ -554,9 +551,6 @@ void si_cp_dma_prefetch(struct si_context *sctx, struct pipe_resource *buf,
       break;
    case GFX11:
       si_cp_dma_prefetch_inline<GFX11>(sctx, address, size);
-      break;
-   case GFX11_5:
-      si_cp_dma_prefetch_inline<GFX11_5>(sctx, address, size);
       break;
    default:
       break;
@@ -809,6 +803,11 @@ enum si_is_draw_vertex_state {
    DRAW_VERTEX_STATE_ON,
 };
 
+enum si_is_blit {
+   BLIT_OFF,
+   BLIT_ON,
+};
+
 enum si_has_pairs {
    HAS_PAIRS_OFF,
    HAS_PAIRS_ON,
@@ -882,10 +881,8 @@ static unsigned si_get_ia_multi_vgt_param(struct si_context *sctx,
           sctx->family == CHIP_HAWAII && G_028AA8_SWITCH_ON_EOI(ia_multi_vgt_param) &&
           num_instanced_prims_less_than<IS_DRAW_VERTEX_STATE>(indirect, prim, min_vertex_count,
                                                               instance_count, 2, sctx->patch_vertices)) {
-         /* The cache flushes should have been emitted already. */
-         assert(sctx->flags == 0);
-         sctx->flags = SI_CONTEXT_VGT_FLUSH;
-         si_emit_cache_flush_direct(sctx);
+         sctx->flags |= SI_CONTEXT_VGT_FLUSH;
+         si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
       }
    }
 
@@ -893,7 +890,8 @@ static unsigned si_get_ia_multi_vgt_param(struct si_context *sctx,
 }
 
 /* rast_prim is the primitive type after GS. */
-template<amd_gfx_level GFX_VERSION, si_has_gs HAS_GS, si_has_ngg NGG> ALWAYS_INLINE
+template<amd_gfx_level GFX_VERSION, si_has_gs HAS_GS, si_has_ngg NGG, si_is_blit IS_BLIT>
+ALWAYS_INLINE
 static void si_emit_rasterizer_prim_state(struct si_context *sctx)
 {
    struct radeon_cmdbuf *cs = &sctx->gfx_cs;
@@ -901,7 +899,7 @@ static void si_emit_rasterizer_prim_state(struct si_context *sctx)
 
    radeon_begin(cs);
 
-   if (unlikely(si_is_line_stipple_enabled(sctx))) {
+   if (!IS_BLIT && unlikely(si_is_line_stipple_enabled(sctx))) {
       /* For lines, reset the stipple pattern at each primitive. Otherwise,
        * reset the stipple pattern at each packet (line strips, line loops).
        */
@@ -933,10 +931,10 @@ static void si_emit_rasterizer_prim_state(struct si_context *sctx)
 }
 
 template <amd_gfx_level GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
-          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_has_pairs HAS_PAIRS> ALWAYS_INLINE
+          si_is_blit IS_BLIT, si_has_pairs HAS_PAIRS> ALWAYS_INLINE
 static void si_emit_vs_state(struct si_context *sctx, unsigned index_size)
 {
-   if (!IS_DRAW_VERTEX_STATE && sctx->num_vs_blit_sgprs) {
+   if (IS_BLIT) {
       /* Re-emit the state after we leave u_blitter. */
       sctx->last_vs_state = ~0;
       sctx->last_gs_state = ~0;
@@ -1191,7 +1189,8 @@ void gfx11_emit_buffered_compute_sh_regs(struct si_context *sctx)
   } while (0)
 
 template <amd_gfx_level GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
-          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_has_pairs HAS_PAIRS> ALWAYS_INLINE
+          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_is_blit IS_BLIT, si_has_pairs HAS_PAIRS>
+ALWAYS_INLINE
 static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw_info *info,
                                  unsigned drawid_base,
                                  const struct pipe_draw_indirect_info *indirect,
@@ -1417,11 +1416,10 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
       /* Base vertex and start instance. */
       int base_vertex = index_size ? draws[0].index_bias : draws[0].start;
 
-      bool set_draw_id = !IS_DRAW_VERTEX_STATE && sctx->vs_uses_draw_id;
-      bool set_base_instance = sctx->vs_uses_base_instance;
-      bool is_blit = !IS_DRAW_VERTEX_STATE && sctx->num_vs_blit_sgprs;
+      bool set_draw_id = !IS_DRAW_VERTEX_STATE && !IS_BLIT && sctx->vs_uses_draw_id;
+      bool set_base_instance = !IS_BLIT && sctx->vs_uses_base_instance;
 
-      if (!is_blit) {
+      if (!IS_BLIT) {
          /* Prefer SET_SH_REG_PAIRS_PACKED* on Gfx11+. */
          if (HAS_PAIRS) {
             radeon_opt_push_gfx_sh_reg(sh_base_reg + SI_SGPR_BASE_VERTEX * 4,
@@ -1459,7 +1457,7 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
       /* Blit SGPRs must be set after gfx11_emit_buffered_sh_regs_inline because they can
        * overwrite them.
        */
-      if (is_blit) {
+      if (IS_BLIT) {
          /* Re-emit draw constants after we leave u_blitter. */
          sctx->tracked_regs.other_reg_saved_mask &=
             ~(BASEVERTEX_DRAWID_STARTINSTANCE_MASK << tracked_base_vertex_reg);
@@ -1594,20 +1592,20 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
                radeon_emit(draws[i].count);
                radeon_emit(V_0287F0_DI_SRC_SEL_AUTO_INDEX | use_opaque);
             }
-            if (num_draws > 1 && (IS_DRAW_VERTEX_STATE || !sctx->num_vs_blit_sgprs)) {
+            if (num_draws > 1 && !IS_BLIT) {
                sctx->tracked_regs.other_reg_saved_mask &=
                   ~(BASEVERTEX_DRAWID_MASK << tracked_base_vertex_reg);
             }
          } else {
             for (unsigned i = 0; i < num_draws; i++) {
-               if (i > 0)
+               if (i > 0 && !IS_BLIT)
                   radeon_set_sh_reg(sh_base_reg + SI_SGPR_BASE_VERTEX * 4, draws[i].start);
 
                radeon_emit(PKT3(PKT3_DRAW_INDEX_AUTO, 1, render_cond_bit));
                radeon_emit(draws[i].count);
                radeon_emit(V_0287F0_DI_SRC_SEL_AUTO_INDEX | use_opaque);
             }
-            if (num_draws > 1 && (IS_DRAW_VERTEX_STATE || !sctx->num_vs_blit_sgprs)) {
+            if (num_draws > 1 && !IS_BLIT) {
                sctx->tracked_regs.other_reg_saved_mask &=
                   ~(BASEVERTEX_MASK << tracked_base_vertex_reg);
             }
@@ -1687,9 +1685,6 @@ void si_set_vertex_buffer_descriptor(struct si_screen *sscreen, struct si_vertex
       break;
    case GFX11:
       si_set_vb_descriptor<GFX11>(velems, vb, element_index, out);
-      break;
-   case GFX11_5:
-      si_set_vb_descriptor<GFX11_5>(velems, vb, element_index, out);
       break;
    default:
       unreachable("unhandled gfx level");
@@ -1968,7 +1963,7 @@ static void si_emit_all_states(struct si_context *sctx, uint64_t skip_atom_mask)
    } while (0)
 
 template <amd_gfx_level GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
-          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_has_pairs HAS_PAIRS,
+          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_is_blit IS_BLIT, si_has_pairs HAS_PAIRS,
           util_popcnt POPCNT> ALWAYS_INLINE
 static void si_draw(struct pipe_context *ctx,
                     const struct pipe_draw_info *info,
@@ -1989,16 +1984,15 @@ static void si_draw(struct pipe_context *ctx,
 
    si_check_dirty_buffers_textures(sctx);
 
-   if (GFX_VERSION < GFX11)
-      gfx6_decompress_textures(sctx, u_bit_consecutive(0, SI_NUM_GRAPHICS_SHADERS));
-   else
-      gfx11_decompress_textures(sctx, u_bit_consecutive(0, SI_NUM_GRAPHICS_SHADERS));
+   if (!IS_BLIT) {
+      if (GFX_VERSION >= GFX11)
+         gfx11_decompress_textures(sctx, u_bit_consecutive(0, SI_NUM_GRAPHICS_SHADERS));
+      else
+         gfx6_decompress_textures(sctx, u_bit_consecutive(0, SI_NUM_GRAPHICS_SHADERS));
+   }
 
    si_need_gfx_cs_space(sctx, num_draws);
 
-   if (u_trace_perfetto_active(&sctx->ds.trace_context))
-      trace_si_begin_draw(&sctx->trace);
-   
    unsigned instance_count = info->instance_count;
 
    /* GFX6-GFX7 treat instance_count==0 as instance_count==1. There is
@@ -2170,7 +2164,7 @@ static void si_draw(struct pipe_context *ctx,
    if (GFX_VERSION >= GFX10) {
       struct si_shader_selector *hw_vs = si_get_vs_inline(sctx, HAS_TESS, HAS_GS)->cso;
 
-      if (NGG &&
+      if (NGG && !IS_BLIT &&
           /* Tessellation and GS set ngg_cull_vert_threshold to UINT_MAX if the prim type
            * is not points, so this check is only needed for VS. */
           (HAS_TESS || HAS_GS || util_rast_prim_is_lines_or_triangles(sctx->current_rast_prim)) &&
@@ -2238,18 +2232,17 @@ static void si_draw(struct pipe_context *ctx,
    bool primitive_restart = !IS_DRAW_VERTEX_STATE && info->primitive_restart;
 
    /* Emit states. */
-   si_emit_rasterizer_prim_state<GFX_VERSION, HAS_GS, NGG>(sctx);
-   /* This emits states and flushes caches. */
-   si_emit_all_states(sctx, masked_atoms);
-   /* This can be done after si_emit_all_states because it doesn't set cache flush flags. */
+   si_emit_rasterizer_prim_state<GFX_VERSION, HAS_GS, NGG, IS_BLIT>(sctx);
+   /* This must be done before si_emit_all_states because it can set cache flush flags. */
    si_emit_draw_registers<GFX_VERSION, HAS_TESS, HAS_GS, NGG, IS_DRAW_VERTEX_STATE>
          (sctx, indirect, prim, index_size, instance_count, primitive_restart,
           info->restart_index, min_direct_count);
-
+   /* This emits states and flushes caches. */
+   si_emit_all_states(sctx, masked_atoms);
    /* <-- CUs are idle here if the cache_flush state waited. */
 
    /* This must be done after si_emit_all_states, which can affect this. */
-   si_emit_vs_state<GFX_VERSION, HAS_TESS, HAS_GS, NGG, IS_DRAW_VERTEX_STATE, HAS_PAIRS>
+   si_emit_vs_state<GFX_VERSION, HAS_TESS, HAS_GS, NGG, IS_BLIT, HAS_PAIRS>
          (sctx, index_size);
 
    /* This needs to be done after cache flushes because ACQUIRE_MEM rolls the context. */
@@ -2263,14 +2256,15 @@ static void si_draw(struct pipe_context *ctx,
    /* This uploads VBO descriptors, sets user SGPRs, and executes the L2 prefetch.
     * It should done after cache flushing.
     */
-   if (unlikely((!si_upload_and_prefetch_VB_descriptors
+   if (!IS_BLIT &&
+       unlikely((!si_upload_and_prefetch_VB_descriptors
                      <GFX_VERSION, HAS_TESS, HAS_GS, NGG, IS_DRAW_VERTEX_STATE, HAS_PAIRS, POPCNT>
                      (sctx, state, partial_velem_mask)))) {
       DRAW_CLEANUP;
       return;
    }
 
-   si_emit_draw_packets<GFX_VERSION, HAS_TESS, HAS_GS, NGG, IS_DRAW_VERTEX_STATE, HAS_PAIRS>
+   si_emit_draw_packets<GFX_VERSION, HAS_TESS, HAS_GS, NGG, IS_DRAW_VERTEX_STATE, IS_BLIT, HAS_PAIRS>
          (sctx, info, drawid_offset, indirect, draws, num_draws, indexbuf,
           index_size, index_offset, instance_count);
    /* <-- CUs start to get busy here if we waited. */
@@ -2293,14 +2287,15 @@ static void si_draw(struct pipe_context *ctx,
 
    /* Workaround for a VGT hang when streamout is enabled.
     * It must be done after drawing. */
-   if (((GFX_VERSION == GFX7 && sctx->family == CHIP_HAWAII) ||
+   if (!IS_BLIT &&
+       ((GFX_VERSION == GFX7 && sctx->family == CHIP_HAWAII) ||
         (GFX_VERSION == GFX8 && (sctx->family == CHIP_TONGA || sctx->family == CHIP_FIJI))) &&
        si_get_strmout_en(sctx)) {
       sctx->flags |= SI_CONTEXT_VGT_STREAMOUT_SYNC;
       si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
    }
 
-   if (unlikely(sctx->decompression_enabled)) {
+   if (unlikely(IS_BLIT && sctx->decompression_enabled)) {
       sctx->num_decompress_calls++;
    } else {
       sctx->num_draw_calls += num_draws;
@@ -2309,10 +2304,6 @@ static void si_draw(struct pipe_context *ctx,
    if (sctx->framebuffer.state.zsbuf) {
       struct si_texture *zstex = (struct si_texture *)sctx->framebuffer.state.zsbuf->texture;
       zstex->depth_cleared_level_mask &= ~BITFIELD_BIT(sctx->framebuffer.state.zsbuf->u.tex.level);
-   }
-
-   if (u_trace_perfetto_active(&sctx->ds.trace_context)) {
-      trace_si_end_draw(&sctx->trace, total_direct_count);
    }
 
    DRAW_CLEANUP;
@@ -2327,7 +2318,7 @@ static void si_draw_vbo(struct pipe_context *ctx,
                         const struct pipe_draw_start_count_bias *draws,
                         unsigned num_draws)
 {
-   si_draw<GFX_VERSION, HAS_TESS, HAS_GS, NGG, DRAW_VERTEX_STATE_OFF, HAS_PAIRS, POPCNT_NO>
+   si_draw<GFX_VERSION, HAS_TESS, HAS_GS, NGG, DRAW_VERTEX_STATE_OFF, BLIT_OFF, HAS_PAIRS, POPCNT_NO>
       (ctx, info, drawid_offset, indirect, draws, num_draws, NULL, 0);
 }
 
@@ -2348,13 +2339,14 @@ static void si_draw_vertex_state(struct pipe_context *ctx,
    dinfo.instance_count = 1;
    dinfo.index.resource = state->b.input.indexbuf;
 
-   si_draw<GFX_VERSION, HAS_TESS, HAS_GS, NGG, DRAW_VERTEX_STATE_ON, HAS_PAIRS, POPCNT>
+   si_draw<GFX_VERSION, HAS_TESS, HAS_GS, NGG, DRAW_VERTEX_STATE_ON, BLIT_OFF, HAS_PAIRS, POPCNT>
       (ctx, &dinfo, 0, NULL, draws, num_draws, vstate, partial_velem_mask);
 
    if (info.take_vertex_state_ownership)
       pipe_vertex_state_reference(&vstate, NULL);
 }
 
+template<amd_gfx_level GFX_VERSION, si_has_ngg NGG, si_has_pairs HAS_PAIRS>
 static void si_draw_rectangle(struct blitter_context *blitter, void *vertex_elements_cso,
                               blitter_get_vs_func get_vs, int x1, int y1, int x2, int y2,
                               float depth, unsigned num_instances, enum blitter_attrib_type type,
@@ -2383,7 +2375,12 @@ static void si_draw_rectangle(struct blitter_context *blitter, void *vertex_elem
    case UTIL_BLITTER_ATTRIB_NONE:;
    }
 
+   /* Whether NGG is enabled is determined inside bind_vs_state, but the si_draw_rectangle
+    * callback is determined in advance. Therefore, the template parameter must be equal
+    * to sctx->ngg, otherwise bad things can happen.
+    */
    pipe->bind_vs_state(pipe, si_get_blitter_vs(sctx, type, num_instances));
+   assert(sctx->ngg == NGG);
 
    struct pipe_draw_info info = {};
    struct pipe_draw_start_count_bias draw;
@@ -2397,7 +2394,8 @@ static void si_draw_rectangle(struct blitter_context *blitter, void *vertex_elem
    /* Blits don't use vertex buffers. */
    sctx->vertex_buffers_dirty = false;
 
-   pipe->draw_vbo(pipe, &info, 0, NULL, &draw, 1);
+   si_draw<GFX_VERSION, TESS_OFF, GS_OFF, NGG, DRAW_VERTEX_STATE_OFF, BLIT_ON, HAS_PAIRS, POPCNT_NO>
+         (pipe, &info, 0, NULL, &draw, 1, NULL, 0);
 }
 
 template <amd_gfx_level GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG>
@@ -2445,6 +2443,17 @@ static void si_init_draw_vbo_all_pipeline_options(struct si_context *sctx)
    si_init_draw_vbo<GFX_VERSION, TESS_OFF, GS_ON,  NGG_ON>(sctx);
    si_init_draw_vbo<GFX_VERSION, TESS_ON,  GS_OFF, NGG_ON>(sctx);
    si_init_draw_vbo<GFX_VERSION, TESS_ON,  GS_ON,  NGG_ON>(sctx);
+
+   /* Determine whether NGG will be enabled for draw_rectangle here. We have to determine NGG here
+    * because draw_rectangle binds the vertex shader, which can change NGG from disabled to enabled,
+    * and thus the NGG state isn't know before draw_rectangle is called.
+    */
+   if (GFX_VERSION >= GFX11 && sctx->screen->info.has_set_pairs_packets)
+      sctx->blitter->draw_rectangle = si_draw_rectangle<GFX_VERSION, NGG_ON, HAS_PAIRS_ON>;
+   else if (GFX_VERSION >= GFX10 && sctx->screen->use_ngg)
+      sctx->blitter->draw_rectangle = si_draw_rectangle<GFX_VERSION, NGG_ON, HAS_PAIRS_OFF>;
+   else
+      sctx->blitter->draw_rectangle = si_draw_rectangle<GFX_VERSION, NGG_OFF, HAS_PAIRS_OFF>;
 }
 
 static void si_invalid_draw_vbo(struct pipe_context *pipe,
@@ -2479,7 +2488,6 @@ void GFX(si_init_draw_functions_)(struct si_context *sctx)
     */
    sctx->b.draw_vbo = si_invalid_draw_vbo;
    sctx->b.draw_vertex_state = si_invalid_draw_vertex_state;
-   sctx->blitter->draw_rectangle = si_draw_rectangle;
 
    si_init_ia_multi_vgt_param_table(sctx);
 }

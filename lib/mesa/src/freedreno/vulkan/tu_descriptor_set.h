@@ -10,11 +10,10 @@
 
 #include "vk_descriptor_set_layout.h"
 
-/* The hardware supports up to 8 descriptor sets since A7XX.
- * Note: This is the maximum across generations, not the maximum for a
- * particular generation so it should only be used for allocation.
+/* The hardware supports 5 descriptor sets, but we reserve 1 for dynamic
+ * descriptors and input attachments.
  */
-#define MAX_SETS 8
+#define MAX_SETS 4
 
 /* I have no idea what the maximum size is, but the hardware supports very
  * large numbers of descriptors (at least 2^16). This limit is based on

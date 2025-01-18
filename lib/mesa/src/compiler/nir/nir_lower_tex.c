@@ -116,7 +116,7 @@ project_src(nir_builder *b, nir_tex_instr *tex)
          continue;
       }
       nir_def *unprojected =
-         tex->src[i].src.ssa;
+         nir_ssa_for_src(b, tex->src[i].src, nir_tex_instr_src_size(tex, i));
       nir_def *projected = nir_fmul(b, unprojected, inv_proj);
 
       /* Array indices don't get projected, so make an new vector with the
@@ -225,7 +225,7 @@ lower_rect(nir_builder *b, nir_tex_instr *tex)
 
    if (coord_index != -1) {
       nir_def *coords =
-         tex->src[coord_index].src.ssa;
+         nir_ssa_for_src(b, tex->src[coord_index].src, tex->coord_components);
       nir_src_rewrite(&tex->src[coord_index].src, nir_fmul(b, coords, scale));
    }
 }
@@ -241,7 +241,7 @@ lower_rect_tex_scale(nir_builder *b, nir_tex_instr *tex)
 
    if (coord_index != -1) {
       nir_def *coords =
-         tex->src[coord_index].src.ssa;
+         nir_ssa_for_src(b, tex->src[coord_index].src, tex->coord_components);
       nir_src_rewrite(&tex->src[coord_index].src, nir_fmul(b, coords, scale));
    }
 }
@@ -301,7 +301,7 @@ sample_plane(nir_builder *b, nir_tex_instr *tex, int plane,
    nir_tex_instr *plane_tex =
       nir_tex_instr_create(b->shader, tex->num_srcs + 1);
    for (unsigned i = 0; i < tex->num_srcs; i++) {
-      plane_tex->src[i].src = nir_src_for_ssa(tex->src[i].src.ssa);
+      nir_src_copy(&plane_tex->src[i].src, &tex->src[i].src, &plane_tex->instr);
       plane_tex->src[i].src_type = tex->src[i].src_type;
    }
    plane_tex->src[tex->num_srcs] = nir_tex_src_for_ssa(nir_tex_src_plane,
@@ -869,17 +869,13 @@ lower_tex_to_txd(nir_builder *b, nir_tex_instr *tex)
 
    /* reuse existing srcs */
    for (unsigned i = 0; i < tex->num_srcs; i++) {
-      txd->src[i].src = nir_src_for_ssa(tex->src[i].src.ssa);
+      nir_src_copy(&txd->src[i].src, &tex->src[i].src, &txd->instr);
       txd->src[i].src_type = tex->src[i].src_type;
    }
-   int coord_idx = nir_tex_instr_src_index(tex, nir_tex_src_coord);
-   assert(coord_idx >= 0);
-   nir_def *coord = tex->src[coord_idx].src.ssa;
-   /* don't take the derivative of the array index */
-   if (tex->is_array)
-      coord = nir_channels(b, coord, nir_component_mask(coord->num_components - 1));
-   nir_def *dfdx = nir_fddx(b, coord);
-   nir_def *dfdy = nir_fddy(b, coord);
+   int coord = nir_tex_instr_src_index(tex, nir_tex_src_coord);
+   assert(coord >= 0);
+   nir_def *dfdx = nir_fddx(b, tex->src[coord].src.ssa);
+   nir_def *dfdy = nir_fddy(b, tex->src[coord].src.ssa);
    txd->src[tex->num_srcs] = nir_tex_src_for_ssa(nir_tex_src_ddx, dfdx);
    txd->src[tex->num_srcs + 1] = nir_tex_src_for_ssa(nir_tex_src_ddy, dfdy);
 
@@ -910,17 +906,17 @@ lower_txb_to_txl(nir_builder *b, nir_tex_instr *tex)
    txl->is_new_style_shadow = tex->is_new_style_shadow;
 
    /* reuse all but bias src */
-   for (int i = 0; i < tex->num_srcs; i++) {
+   for (int i = 0; i < 2; i++) {
       if (tex->src[i].src_type != nir_tex_src_bias) {
-         txl->src[i].src = nir_src_for_ssa(tex->src[i].src.ssa);
+         nir_src_copy(&txl->src[i].src, &tex->src[i].src, &txl->instr);
          txl->src[i].src_type = tex->src[i].src_type;
       }
    }
-   nir_def *lod = nir_get_texture_lod(b, tex);
+   nir_def *lod = nir_get_texture_lod(b, txl);
 
    int bias_idx = nir_tex_instr_src_index(tex, nir_tex_src_bias);
    assert(bias_idx >= 0);
-   lod = nir_fadd(b, lod, tex->src[bias_idx].src.ssa);
+   lod = nir_fadd(b, nir_channel(b, lod, 1), nir_ssa_for_src(b, tex->src[bias_idx].src, 1));
    txl->src[tex->num_srcs - 1] = nir_tex_src_for_ssa(nir_tex_src_lod, lod);
 
    nir_def_init(&txl->instr, &txl->def,
@@ -945,7 +941,7 @@ saturate_src(nir_builder *b, nir_tex_instr *tex, unsigned sat_mask)
 
    if (coord_index != -1) {
       nir_def *src =
-         tex->src[coord_index].src.ssa;
+         nir_ssa_for_src(b, tex->src[coord_index].src, tex->coord_components);
 
       /* split src into components: */
       nir_def *comp[4];
@@ -1205,7 +1201,7 @@ lower_tg4_offsets(nir_builder *b, nir_tex_instr *tex)
       tex_copy->backend_flags = tex->backend_flags;
 
       for (unsigned j = 0; j < tex->num_srcs; ++j) {
-         tex_copy->src[j].src = nir_src_for_ssa(tex->src[j].src.ssa);
+         nir_src_copy(&tex_copy->src[j].src, &tex->src[j].src, &tex_copy->instr);
          tex_copy->src[j].src_type = tex->src[j].src_type;
       }
 
@@ -1249,7 +1245,7 @@ nir_lower_txs_lod(nir_builder *b, nir_tex_instr *tex)
    unsigned dest_size = nir_tex_instr_dest_size(tex);
 
    b->cursor = nir_before_instr(&tex->instr);
-   nir_def *lod = tex->src[lod_idx].src.ssa;
+   nir_def *lod = nir_ssa_for_src(b, tex->src[lod_idx].src, 1);
 
    /* Replace the non-0-LOD in the initial TXS operation by a 0-LOD. */
    nir_src_rewrite(&tex->src[lod_idx].src, nir_imm_int(b, 0));
@@ -1616,7 +1612,6 @@ nir_lower_tex_block(nir_block *block, nir_builder *b,
 
       if (tex->op == nir_texop_txd &&
           (options->lower_txd ||
-           (options->lower_txd_clamp && has_min_lod) ||
            (options->lower_txd_shadow && tex->is_shadow) ||
            (options->lower_txd_shadow_clamp && tex->is_shadow && has_min_lod) ||
            (options->lower_txd_offset_clamp && has_offset && has_min_lod) ||

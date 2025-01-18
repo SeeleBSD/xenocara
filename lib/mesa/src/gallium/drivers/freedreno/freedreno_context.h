@@ -166,10 +166,9 @@ enum fd_dirty_3d_state {
    FD_DIRTY_IMAGE = BIT(18),
    FD_DIRTY_SSBO = BIT(19),
    FD_DIRTY_QUERY = BIT(20),
-   FD_DIRTY_SAMPLE_LOCATIONS = BIT(21),
 
    /* only used by a2xx.. possibly can be removed.. */
-   FD_DIRTY_TEXSTATE = BIT(22),
+   FD_DIRTY_TEXSTATE = BIT(21),
 
    /* fine grained state changes, for cases where state is not orthogonal
     * from hw perspective:
@@ -447,14 +446,6 @@ struct fd_context {
    /* Per vsc pipe bo's (a2xx-a5xx): */
    struct fd_bo *vsc_pipe_bo[32] dt;
 
-   /* Table of bo's attached to all batches up-front (because they
-    * are commonly used, and that is easier than attaching on-use).
-    * In particular, these are driver internal buffers which do not
-    * participate in batch resource tracking.
-    */
-   struct fd_bo *private_bos[3];
-   unsigned num_private_bos;
-
    /* Maps generic gallium oriented fd_dirty_3d_state bits to generation
     * specific bitmask of state "groups".
     */
@@ -495,10 +486,6 @@ struct fd_context {
    struct pipe_stencil_ref stencil_ref dt;
    unsigned sample_mask dt;
    unsigned min_samples dt;
-
-   /* 1x1 grid, max 4x MSAA: */
-   uint8_t sample_locations[4] dt;
-   bool sample_locations_enabled dt;
 
    /* local context fb state, for when ctx->batch is null: */
    struct pipe_framebuffer_state framebuffer dt;
@@ -678,8 +665,6 @@ fd_stream_output_target(struct pipe_stream_output_target *target)
 {
    return (struct fd_stream_output_target *)target;
 }
-
-void fd_context_add_private_bo(struct fd_context *ctx, struct fd_bo *bo);
 
 /* Mark specified non-shader-stage related state as dirty: */
 static inline void

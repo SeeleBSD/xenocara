@@ -57,6 +57,7 @@ static const nir_shader_compiler_options vs_nir_options = {
    /* could be implemented by clamp */
    .lower_fsat = true,
    .lower_bitops = true,
+   .lower_rotate = true,
    .lower_sincos = true,
    .lower_fceil = true,
    .lower_insert_byte = true,
@@ -77,6 +78,7 @@ static const nir_shader_compiler_options fs_nir_options = {
    .lower_flrp32 = true,
    .lower_flrp64 = true,
    .lower_fsign = true,
+   .lower_rotate = true,
    .lower_fdot = true,
    .lower_fdph = true,
    .lower_insert_byte = true,
@@ -270,7 +272,7 @@ lima_program_optimize_fs_nir(struct nir_shader *s,
    NIR_PASS_V(s, nir_convert_from_ssa, true);
    NIR_PASS_V(s, nir_remove_dead_variables, nir_var_function_temp, NULL);
 
-   NIR_PASS_V(s, nir_move_vec_src_uses_to_dest, false);
+   NIR_PASS_V(s, nir_move_vec_src_uses_to_dest);
    NIR_PASS_V(s, nir_lower_vec_to_regs, lima_vec_to_regs_filter_cb, NULL);
 
    NIR_PASS_V(s, nir_opt_dce); /* clean up any new dead code from vec to movs */

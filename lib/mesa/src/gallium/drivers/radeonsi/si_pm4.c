@@ -135,7 +135,7 @@ void si_pm4_finalize(struct si_pm4_state *state)
                if (strstr(ac_get_register_name(state->screen->info.gfx_level,
                                                state->screen->info.family, reg_offset),
                           "SPI_SHADER_PGM_LO_")) {
-                  state->spi_shader_pgm_lo_reg = reg_offset;
+                  state->reg_va_low_idx = get_packed_reg_valueN_idx(state, i);
                   break;
                }
             }
@@ -162,8 +162,7 @@ void si_pm4_finalize(struct si_pm4_state *state)
          if (strstr(ac_get_register_name(state->screen->info.gfx_level,
                                          state->screen->info.family, reg_base_offset + i * 4),
                     "SPI_SHADER_PGM_LO_")) {
-            state->spi_shader_pgm_lo_reg = reg_base_offset + i * 4;
-
+            state->reg_va_low_idx = state->last_pm4 + 2 + i;
             break;
          }
       }

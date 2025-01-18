@@ -45,19 +45,7 @@ extern "C" {
 struct u_tracepoint {
    unsigned payload_sz;
    const char *name;
-   /**
-    * Whether this tracepoint's timestamp must be recorded with as an
-    * end-of-pipe timestamp (for some GPUs the recording timestamp instruction
-    * might be different for top/end of pipe).
-    */
-   bool end_of_pipe:1;
-   /**
-    * Index of this tracepoint in <basename>_tracepoint_names in the generated
-    * u_trace perfetto header. By associating these names with iids in setup,
-    * tracepoints can be presented with with their own names by passing that
-    * to event->set_stage_iid().
-    */
-   uint16_t tp_idx;
+   bool end_of_pipe;
    void (*print)(FILE *out, const void *payload);
    void (*print_json)(FILE *out, const void *payload);
 #ifdef HAVE_PERFETTO
@@ -66,7 +54,6 @@ struct u_tracepoint {
     */
    void (*perfetto)(void *pctx,
                     uint64_t ts_ns,
-                    uint16_t tp_idx,
                     const void *flush_data,
                     const void *payload);
 #endif

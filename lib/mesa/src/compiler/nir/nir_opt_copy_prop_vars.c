@@ -110,7 +110,7 @@ struct copy_prop_var_state {
    nir_function_impl *impl;
 
    void *mem_ctx;
-   linear_ctx *lin_ctx;
+   void *lin_ctx;
 
    /* Maps nodes to vars_written.  Used to invalidate copy entries when
     * visiting each node.
@@ -790,15 +790,9 @@ specialize_wildcards(nir_builder *b,
                      nir_deref_path *specific)
 {
    nir_deref_instr **deref_p = &deref->path[1];
-   nir_deref_instr *ret_tail = deref->path[0];
-   for (; *deref_p; deref_p++) {
-      if ((*deref_p)->deref_type == nir_deref_type_array_wildcard)
-         break;
-      ret_tail = *deref_p;
-   }
-
    nir_deref_instr **guide_p = &guide->path[1];
    nir_deref_instr **spec_p = &specific->path[1];
+   nir_deref_instr *ret_tail = deref->path[0];
    for (; *deref_p; deref_p++) {
       if ((*deref_p)->deref_type == nir_deref_type_array_wildcard) {
          /* This is where things get tricky.  We have to search through
@@ -1065,12 +1059,6 @@ copy_prop_vars_block(struct copy_prop_var_state *state,
          if (nir_deref_mode_must_be(src.instr, ignore))
             break;
 
-         /* Ignore trivial casts. If trivial casts are applied to array derefs of vectors,
-          * not doing this causes is_array_deref_of_vector to (wrongly) return false. */
-         while (src.instr->deref_type == nir_deref_type_cast &&
-                nir_deref_instr_parent(src.instr) && nir_deref_cast_is_trivial(src.instr))
-            src.instr = nir_deref_instr_parent(src.instr);
-
          /* Direct array_derefs of vectors operate on the vectors (the parent
           * deref).  Indirects will be handled like other derefs.
           */
@@ -1162,12 +1150,6 @@ copy_prop_vars_block(struct copy_prop_var_state *state,
 
          nir_deref_and_path dst = { nir_src_as_deref(intrin->src[0]), NULL };
          assert(glsl_type_is_vector_or_scalar(dst.instr->type));
-
-         /* Ignore trivial casts. If trivial casts are applied to array derefs of vectors,
-          * not doing this causes is_array_deref_of_vector to (wrongly) return false. */
-         while (dst.instr->deref_type == nir_deref_type_cast &&
-                nir_deref_instr_parent(dst.instr) && nir_deref_cast_is_trivial(dst.instr))
-            dst.instr = nir_deref_instr_parent(dst.instr);
 
          /* Direct array_derefs of vectors operate on the vectors (the parent
           * deref).  Indirects will be handled like other derefs.
@@ -1500,7 +1482,7 @@ nir_copy_prop_vars_impl(nir_function_impl *impl)
    struct copy_prop_var_state state = {
       .impl = impl,
       .mem_ctx = mem_ctx,
-      .lin_ctx = linear_context(mem_ctx),
+      .lin_ctx = linear_zalloc_parent(mem_ctx, 0),
 
       .vars_written_map = _mesa_pointer_hash_table_create(mem_ctx),
    };

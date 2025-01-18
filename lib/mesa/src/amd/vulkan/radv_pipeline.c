@@ -157,12 +157,9 @@ radv_generate_pipeline_key(const struct radv_device *device, const VkPipelineSha
    key.disable_aniso_single_level =
       device->instance->disable_aniso_single_level && device->physical_device->rad_info.gfx_level < GFX8;
 
-   key.disable_trunc_coord = device->disable_trunc_coord;
-
    key.image_2d_view_of_3d = device->image_2d_view_of_3d && device->physical_device->rad_info.gfx_level == GFX9;
 
    key.tex_non_uniform = device->instance->tex_non_uniform;
-   key.ssbo_non_uniform = device->instance->ssbo_non_uniform;
 
    for (unsigned i = 0; i < num_stages; ++i) {
       const VkPipelineShaderStageCreateInfo *const stage = &stages[i];
@@ -215,11 +212,6 @@ radv_generate_pipeline_key(const struct radv_device *device, const VkPipelineSha
          key.stage_info[stage].uniform_robustness2 = 1;
       if (stage == MESA_SHADER_VERTEX && vertex_robustness >= RADV_BUFFER_ROBUSTNESS_1)
          key.vertex_robustness1 = 1u;
-   }
-
-   for (uint32_t i = 0; i < num_stages; i++) {
-      if (stages[i].stage == VK_SHADER_STAGE_MESH_BIT_EXT && device->mesh_fast_launch_2)
-         key.mesh_fast_launch_2 = 1u;
    }
 
    return key;
@@ -625,8 +617,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_pipeline_key 
    NIR_PASS(_, stage->nir, ac_nir_lower_tex,
             &(ac_nir_lower_tex_options){
                .gfx_level = gfx_level,
-               .lower_array_layer_round_even =
-                  !device->physical_device->rad_info.conformant_trunc_coord || device->disable_trunc_coord,
+               .lower_array_layer_round_even = !device->physical_device->rad_info.conformant_trunc_coord,
                .fix_derivs_in_divergent_cf = fix_derivs_in_divergent_cf,
                .max_wqm_vgprs = 64, // TODO: improve spiller and RA support for linear VGPRs
             });
@@ -1187,8 +1178,7 @@ radv_copy_shader_stage_create_info(struct radv_device *device, uint32_t stageCou
    if (!new_stages)
       return NULL;
 
-   if (size)
-      memcpy(new_stages, pStages, size);
+   memcpy(new_stages, pStages, size);
 
    for (uint32_t i = 0; i < stageCount; i++) {
       RADV_FROM_HANDLE(vk_shader_module, module, new_stages[i].module);

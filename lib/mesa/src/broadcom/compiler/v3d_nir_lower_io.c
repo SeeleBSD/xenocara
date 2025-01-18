@@ -140,7 +140,8 @@ v3d_nir_lower_vpm_output(struct v3d_compile *c, nir_builder *b,
 
         int start_comp = nir_intrinsic_component(intr);
         unsigned location = nir_intrinsic_io_semantics(intr).location;
-        nir_def *src = intr->src[0].ssa;
+        nir_def *src = nir_ssa_for_src(b, intr->src[0],
+                                           intr->num_components);
         /* Save off the components of the position for the setup of VPM inputs
          * read by fixed function HW.
          */
@@ -515,13 +516,9 @@ v3d_nir_emit_ff_vpm_outputs(struct v3d_compile *c, nir_builder *b,
                          * The correct fix for this as recommended by Broadcom
                          * is to convert to .8 fixed-point with ffloor().
                          */
-                        if (c->devinfo->ver <= 42)
-                                 pos = nir_f2i32(b, nir_ffloor(b, pos));
-                        else
-                                 pos = nir_f2i32(b, nir_fround_even(b, pos));
-
-                       v3d_nir_store_output(b, state->vp_vpm_offset + i,
-                                            offset_reg, pos);
+                        pos = nir_f2i32(b, nir_ffloor(b, pos));
+                        v3d_nir_store_output(b, state->vp_vpm_offset + i,
+                                             offset_reg, pos);
                 }
         }
 

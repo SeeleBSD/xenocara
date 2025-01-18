@@ -29,7 +29,6 @@
 #include "brw_vec4_tes.h"
 #include "dev/intel_debug.h"
 #include "util/macros.h"
-#include "util/u_debug.h"
 
 enum brw_reg_type
 brw_type_for_base_type(const struct glsl_type *type)
@@ -75,7 +74,7 @@ brw_type_for_base_type(const struct glsl_type *type)
       return BRW_REGISTER_TYPE_Q;
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_ERROR:
-   case GLSL_TYPE_COOPERATIVE_MATRIX:
+   case GLSL_TYPE_FUNCTION:
       unreachable("not reached");
    }
 
@@ -699,6 +698,8 @@ backend_shader::backend_shader(const struct brw_compiler *compiler,
      stage(shader->info.stage),
      debug_enabled(debug_enabled)
 {
+   stage_name = _mesa_shader_stage_to_string(stage);
+   stage_abbrev = _mesa_shader_stage_to_abbrev(stage);
 }
 
 backend_shader::~backend_shader()
@@ -1244,7 +1245,7 @@ void
 backend_shader::dump_instructions(const char *name) const
 {
    FILE *file = stderr;
-   if (name && __normal_user()) {
+   if (name && geteuid() != 0) {
       file = fopen(name, "w");
       if (!file)
          file = stderr;
@@ -1396,9 +1397,7 @@ brw_compile_tes(const struct brw_compiler *compiler,
          return NULL;
       }
 
-      assert(v.payload().num_regs % reg_unit(devinfo) == 0);
-      prog_data->base.base.dispatch_grf_start_reg = v.payload().num_regs / reg_unit(devinfo);
-
+      prog_data->base.base.dispatch_grf_start_reg = v.payload().num_regs;
       prog_data->base.dispatch_mode = DISPATCH_MODE_SIMD8;
 
       fs_generator g(compiler, &params->base,

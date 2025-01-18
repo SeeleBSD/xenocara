@@ -88,7 +88,6 @@ enum ac_pc_gpu_block {
    GEDIST  = 0x2E,
    GESE    = 0x2F,
    DF      = 0x30,
-   SQ_WGP  = 0x31, /* GFX11+ */
    NUM_GPU_BLOCK,
 };
 
@@ -119,7 +118,6 @@ struct ac_pc_block_gfxdescr {
 struct ac_pc_block {
    const struct ac_pc_block_gfxdescr *b;
    unsigned num_instances;
-   unsigned num_global_instances;
 
    unsigned num_groups;
    char *group_names;

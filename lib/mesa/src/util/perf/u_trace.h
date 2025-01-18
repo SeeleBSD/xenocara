@@ -217,8 +217,6 @@ struct u_trace_context {
 struct u_trace {
    struct u_trace_context *utctx;
 
-   uint32_t num_traces;
-
    struct list_head
       trace_chunks; /* list of unflushed trace chunks in fifo order */
 };

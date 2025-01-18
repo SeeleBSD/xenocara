@@ -17,12 +17,13 @@
 
 /*
  * If a block contains phi nodes, they must come at the start of the block. If a
- * block contains control flow, it must come at the beginning/end as applicable.
+ * block contains control flow, it must come after a p_logical_end marker.
  * Therefore the form of a valid block is:
  *
  *       Control flow instructions (else)
  *       Phi nodes
  *       General instructions
+ *       Logical end
  *       Control flow instructions (except else)
  *
  * Validate that this form is satisfied.
@@ -57,12 +58,24 @@ agx_validate_block_form(agx_block *block)
          break;
 
       default:
-         if (instr_after_logical_end(I)) {
-            state = AGX_BLOCK_STATE_CF;
-         } else {
-            agx_validate_assert(state != AGX_BLOCK_STATE_CF);
-            state = AGX_BLOCK_STATE_BODY;
-         }
+         agx_validate_assert(state != AGX_BLOCK_STATE_CF);
+         state = AGX_BLOCK_STATE_BODY;
+         break;
+
+      case AGX_OPCODE_LOGICAL_END:
+         agx_validate_assert(state != AGX_BLOCK_STATE_CF);
+         state = AGX_BLOCK_STATE_CF;
+         break;
+
+      case AGX_OPCODE_JMP_EXEC_ANY:
+      case AGX_OPCODE_JMP_EXEC_NONE:
+      case AGX_OPCODE_POP_EXEC:
+      case AGX_OPCODE_IF_ICMP:
+      case AGX_OPCODE_WHILE_ICMP:
+      case AGX_OPCODE_IF_FCMP:
+      case AGX_OPCODE_WHILE_FCMP:
+      case AGX_OPCODE_STOP:
+         agx_validate_assert(state == AGX_BLOCK_STATE_CF);
          break;
       }
    }

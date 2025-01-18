@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #ifndef NVK_DESCRIPTOR_SET
 #define NVK_DESCRIPTOR_SET 1
 
@@ -52,9 +48,10 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(nvk_descriptor_pool, base, VkDescriptorPool,
 struct nvk_descriptor_set {
    struct vk_object_base base;
    struct nvk_descriptor_set_layout *layout;
+   uint32_t bo_offset;
+   uint32_t bo_size;
+   struct nouveau_ws_bo *bo;
    void *mapped_ptr;
-   uint64_t addr;
-   uint32_t size;
 
    struct nvk_buffer_address dynamic_buffers[];
 };
@@ -65,7 +62,10 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(nvk_descriptor_set, base, VkDescriptorSet,
 static inline uint64_t
 nvk_descriptor_set_addr(const struct nvk_descriptor_set *set)
 {
-   return set->addr;
+   if (set->bo == NULL)
+      return 0;
+
+   return set->bo->offset + set->bo_offset;
 }
 
 struct nvk_push_descriptor_set {

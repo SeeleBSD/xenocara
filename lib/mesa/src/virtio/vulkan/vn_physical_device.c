@@ -153,8 +153,6 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
          dynamic_rendering_unused_attachments;
       VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT
          fragment_shader_interlock;
-      VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT
-         graphics_pipeline_library;
       VkPhysicalDeviceImage2DViewOf3DFeaturesEXT image_2d_view_of_3d;
       VkPhysicalDeviceImageViewMinLodFeaturesEXT image_view_min_lod;
       VkPhysicalDeviceIndexTypeUint8FeaturesEXT index_type_uint8;
@@ -173,8 +171,6 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
       VkPhysicalDeviceTransformFeedbackFeaturesEXT transform_feedback;
       VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT
          vertex_attribute_divisor;
-      VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT
-         vertex_input_dynamic_state;
    } local_feats;
 
    /* Clear the struct so that all unqueried features will be VK_FALSE. */
@@ -251,7 +247,6 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
    VN_ADD_PNEXT_EXT(feats2, DEPTH_CLIP_ENABLE_FEATURES_EXT, local_feats.depth_clip_enable, exts->EXT_depth_clip_enable);
    VN_ADD_PNEXT_EXT(feats2, DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT, local_feats.dynamic_rendering_unused_attachments, exts->EXT_dynamic_rendering_unused_attachments);
    VN_ADD_PNEXT_EXT(feats2, FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT, local_feats.fragment_shader_interlock, exts->EXT_fragment_shader_interlock);
-   VN_ADD_PNEXT_EXT(feats2, GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, local_feats.graphics_pipeline_library, exts->EXT_graphics_pipeline_library);
    VN_ADD_PNEXT_EXT(feats2, IMAGE_2D_VIEW_OF_3D_FEATURES_EXT, local_feats.image_2d_view_of_3d, exts->EXT_image_2d_view_of_3d);
    VN_ADD_PNEXT_EXT(feats2, IMAGE_VIEW_MIN_LOD_FEATURES_EXT, local_feats.image_view_min_lod, exts->EXT_image_view_min_lod);
    VN_ADD_PNEXT_EXT(feats2, INDEX_TYPE_UINT8_FEATURES_EXT, local_feats.index_type_uint8, exts->EXT_index_type_uint8);
@@ -266,7 +261,6 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
    VN_ADD_PNEXT_EXT(feats2, ROBUSTNESS_2_FEATURES_EXT, local_feats.robustness_2, exts->EXT_robustness2);
    VN_ADD_PNEXT_EXT(feats2, TRANSFORM_FEEDBACK_FEATURES_EXT, local_feats.transform_feedback, exts->EXT_transform_feedback);
    VN_ADD_PNEXT_EXT(feats2, VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT, local_feats.vertex_attribute_divisor, exts->EXT_vertex_attribute_divisor);
-   VN_ADD_PNEXT_EXT(feats2, VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, local_feats.vertex_input_dynamic_state, exts->EXT_vertex_input_dynamic_state);
 
    /* clang-format on */
 
@@ -424,7 +418,6 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
    /* EXT */
    VN_ADD_PNEXT_EXT(props2, CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, props->conservative_rasterization, exts->EXT_conservative_rasterization);
    VN_ADD_PNEXT_EXT(props2, CUSTOM_BORDER_COLOR_PROPERTIES_EXT, props->custom_border_color, exts->EXT_custom_border_color);
-   VN_ADD_PNEXT_EXT(props2, GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT, props->graphics_pipeline_library, exts->EXT_graphics_pipeline_library);
    VN_ADD_PNEXT_EXT(props2, LINE_RASTERIZATION_PROPERTIES_EXT, props->line_rasterization, exts->EXT_line_rasterization);
    VN_ADD_PNEXT_EXT(props2, MULTI_DRAW_PROPERTIES_EXT, props->multi_draw, exts->EXT_multi_draw);
    VN_ADD_PNEXT_EXT(props2, PCI_BUS_INFO_PROPERTIES_EXT, props->pci_bus_info, exts->EXT_pci_bus_info);
@@ -713,13 +706,14 @@ vn_physical_device_init_memory_properties(
    struct vn_physical_device *physical_dev)
 {
    struct vn_instance *instance = physical_dev->instance;
-   VkPhysicalDeviceMemoryProperties2 props2 = {
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
-   };
-   vn_call_vkGetPhysicalDeviceMemoryProperties2(
-      instance, vn_physical_device_to_handle(physical_dev), &props2);
+   VkPhysicalDeviceMemoryProperties2 *props2 =
+      &physical_dev->memory_properties;
+   VkPhysicalDeviceMemoryProperties *props1 = &props2->memoryProperties;
 
-   physical_dev->memory_properties = props2.memoryProperties;
+   props2->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+
+   vn_call_vkGetPhysicalDeviceMemoryProperties2(
+      instance, vn_physical_device_to_handle(physical_dev), props2);
 
    /* Kernel makes every mapping coherent. If a memory type is truly
     * incoherent, it's better to remove the host-visible flag than silently
@@ -729,9 +723,10 @@ vn_physical_device_init_memory_properties(
     */
    uint32_t coherent_uncached = VK_MAX_MEMORY_TYPES;
    uint32_t incoherent_cached = VK_MAX_MEMORY_TYPES;
-   VkPhysicalDeviceMemoryProperties *props = &physical_dev->memory_properties;
-   for (uint32_t i = 0; i < props->memoryTypeCount; i++) {
-      const VkMemoryPropertyFlags flags = props->memoryTypes[i].propertyFlags;
+
+   for (uint32_t i = 0; i < props1->memoryTypeCount; i++) {
+      const VkMemoryPropertyFlags flags =
+         props1->memoryTypes[i].propertyFlags;
       const bool coherent = flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
       const bool cached = flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
       if (coherent && cached) {
@@ -745,15 +740,15 @@ vn_physical_device_init_memory_properties(
       }
    }
 
-   for (uint32_t i = 0; i < props->memoryTypeCount; i++) {
-      VkMemoryType *type = &props->memoryTypes[i];
+   for (uint32_t i = 0; i < props1->memoryTypeCount; i++) {
+      VkMemoryType *type = &props1->memoryTypes[i];
       if (i == incoherent_cached) {
          /* Only get here if no coherent+cached type is available, and the
           * spec guarantees that there is at least one coherent type, so it
           * must be coherent+uncached, hence the index is always valid.
           */
-         assert(coherent_uncached < props->memoryTypeCount);
-         type->heapIndex = props->memoryTypes[coherent_uncached].heapIndex;
+         assert(coherent_uncached < props1->memoryTypeCount);
+         type->heapIndex = props1->memoryTypes[coherent_uncached].heapIndex;
       } else if (!(type->propertyFlags &
                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
          type->propertyFlags &= ~(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -845,10 +840,10 @@ vn_physical_device_init_external_fence_handles(
 
    physical_dev->external_fence_handles = 0;
 
-   if (physical_dev->instance->renderer->info.has_external_sync) {
-      physical_dev->external_fence_handles =
-         VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT;
-   }
+#ifdef ANDROID
+   physical_dev->external_fence_handles =
+      VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT;
+#endif
 }
 
 static void
@@ -896,10 +891,10 @@ vn_physical_device_init_external_semaphore_handles(
    physical_dev->external_binary_semaphore_handles = 0;
    physical_dev->external_timeline_semaphore_handles = 0;
 
-   if (physical_dev->instance->renderer->info.has_external_sync) {
-      physical_dev->external_binary_semaphore_handles =
-         VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
-   }
+#ifdef ANDROID
+   physical_dev->external_binary_semaphore_handles =
+      VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+#endif
 }
 
 static inline bool
@@ -929,19 +924,11 @@ vn_physical_device_get_native_extensions(
 {
    memset(exts, 0, sizeof(*exts));
 
-   if (physical_dev->instance->renderer->info.has_external_sync &&
-       physical_dev->renderer_sync_fd.fence_exportable)
-      exts->KHR_external_fence_fd = true;
-
-   if (physical_dev->instance->renderer->info.has_external_sync &&
-       physical_dev->renderer_sync_fd.semaphore_importable &&
-       physical_dev->renderer_sync_fd.semaphore_exportable)
-      exts->KHR_external_semaphore_fd = true;
-
    const bool can_external_mem =
       vn_physical_device_get_external_memory_support(physical_dev);
-   if (can_external_mem) {
+
 #ifdef ANDROID
+   if (can_external_mem) {
       exts->ANDROID_external_memory_android_hardware_buffer = true;
 
       /* For wsi, we require renderer:
@@ -957,11 +944,21 @@ vn_physical_device_get_native_extensions(
       if (physical_dev->renderer_sync_fd.semaphore_importable &&
           physical_dev->renderer_sync_fd.fence_exportable)
          exts->ANDROID_native_buffer = true;
+   }
+
+   if (physical_dev->renderer_sync_fd.fence_exportable)
+      exts->KHR_external_fence_fd = true;
+
+   if (physical_dev->renderer_sync_fd.semaphore_importable &&
+       physical_dev->renderer_sync_fd.semaphore_exportable)
+      exts->KHR_external_semaphore_fd = true;
+
 #else  /* ANDROID */
+   if (can_external_mem) {
       exts->KHR_external_memory_fd = true;
       exts->EXT_external_memory_dma_buf = true;
-#endif /* ANDROID */
    }
+#endif /* ANDROID */
 
 #ifdef VN_USE_WSI_PLATFORM
    if (can_external_mem &&
@@ -1081,7 +1078,6 @@ vn_physical_device_get_passthrough_extensions(
       .EXT_ycbcr_2plane_444_formats = true,
 
       /* KHR */
-      .KHR_pipeline_library = true,
       .KHR_push_descriptor = true,
       .KHR_shader_clock = true,
 
@@ -1096,7 +1092,6 @@ vn_physical_device_get_passthrough_extensions(
       .EXT_depth_clip_enable = true,
       .EXT_dynamic_rendering_unused_attachments = true,
       .EXT_fragment_shader_interlock = true,
-      .EXT_graphics_pipeline_library = VN_DEBUG(GPL),
       .EXT_image_2d_view_of_3d = true,
       .EXT_image_drm_format_modifier = true,
       .EXT_image_view_min_lod = true,
@@ -1136,7 +1131,6 @@ vn_physical_device_get_passthrough_extensions(
       .EXT_shader_subgroup_ballot = true,
       .EXT_transform_feedback = true,
       .EXT_vertex_attribute_divisor = true,
-      .EXT_vertex_input_dynamic_state = true,
 
       /* vendor */
       .VALVE_mutable_descriptor_type = true,
@@ -1738,7 +1732,6 @@ vn_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
       /* EXT */
       CASE(CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT, conservative_rasterization);
       CASE(CUSTOM_BORDER_COLOR_PROPERTIES_EXT, custom_border_color);
-      CASE(GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT, graphics_pipeline_library);
       CASE(LINE_RASTERIZATION_PROPERTIES_EXT, line_rasterization);
       CASE(MULTI_DRAW_PROPERTIES_EXT, multi_draw);
       CASE(PROVOKING_VERTEX_PROPERTIES_EXT, provoking_vertex);
@@ -1843,7 +1836,8 @@ vn_GetPhysicalDeviceMemoryProperties2(
     * our cached version.  Our cached version may differ from the server's
     * version due to workarounds.
     */
-   pMemoryProperties->memoryProperties = physical_dev->memory_properties;
+   pMemoryProperties->memoryProperties =
+      physical_dev->memory_properties.memoryProperties;
 }
 
 void

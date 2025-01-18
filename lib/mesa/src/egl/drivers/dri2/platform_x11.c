@@ -1505,12 +1505,25 @@ dri2_x11_setup_swap_interval(_EGLDisplay *disp)
 static EGLBoolean
 dri2_initialize_x11_swrast(_EGLDisplay *disp)
 {
-   struct dri2_egl_display *dri2_dpy = dri2_display_create();
-   if (!dri2_dpy)
-      return EGL_FALSE;
+   _EGLDevice *dev;
+   struct dri2_egl_display *dri2_dpy;
 
+   dri2_dpy = calloc(1, sizeof *dri2_dpy);
+   if (!dri2_dpy)
+      return _eglError(EGL_BAD_ALLOC, "eglInitialize");
+
+   dri2_dpy->fd_render_gpu = -1;
+   dri2_dpy->fd_display_gpu = -1;
    if (!dri2_get_xcb_connection(disp, dri2_dpy))
       goto cleanup;
+
+   dev = _eglFindDevice(dri2_dpy->fd_render_gpu, true);
+   if (!dev) {
+      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to find EGLDevice");
+      goto cleanup;
+   }
+
+   disp->Device = dev;
 
    /*
     * Every hardware driver_name is set using strdup. Doing the same in
@@ -1530,11 +1543,6 @@ dri2_initialize_x11_swrast(_EGLDisplay *disp)
 
    if (!dri2_setup_extensions(disp))
       goto cleanup;
-
-   if (!dri2_setup_device(disp, true)) {
-      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to setup EGLDevice");
-      goto cleanup;
-   }
 
    dri2_setup_screen(disp);
 
@@ -1591,16 +1599,28 @@ static const __DRIextension *dri3_image_loader_extensions[] = {
 static EGLBoolean
 dri2_initialize_x11_dri3(_EGLDisplay *disp)
 {
-   struct dri2_egl_display *dri2_dpy = dri2_display_create();
+   _EGLDevice *dev;
+   struct dri2_egl_display *dri2_dpy;
 
+   dri2_dpy = calloc(1, sizeof *dri2_dpy);
    if (!dri2_dpy)
-      return EGL_FALSE;
+      return _eglError(EGL_BAD_ALLOC, "eglInitialize");
 
+   dri2_dpy->fd_render_gpu = -1;
+   dri2_dpy->fd_display_gpu = -1;
    if (!dri2_get_xcb_connection(disp, dri2_dpy))
       goto cleanup;
 
    if (!dri3_x11_connect(dri2_dpy))
       goto cleanup;
+
+   dev = _eglFindDevice(dri2_dpy->fd_render_gpu, false);
+   if (!dev) {
+      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to find EGLDevice");
+      goto cleanup;
+   }
+
+   disp->Device = dev;
 
    if (!dri2_load_driver_dri3(disp))
       goto cleanup;
@@ -1615,11 +1635,6 @@ dri2_initialize_x11_dri3(_EGLDisplay *disp)
 
    if (!dri2_setup_extensions(disp))
       goto cleanup;
-
-   if (!dri2_setup_device(disp, false)) {
-      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to setup EGLDevice");
-      goto cleanup;
-   }
 
    dri2_setup_screen(disp);
 
@@ -1697,15 +1712,28 @@ static const __DRIextension *dri2_loader_extensions[] = {
 static EGLBoolean
 dri2_initialize_x11_dri2(_EGLDisplay *disp)
 {
-   struct dri2_egl_display *dri2_dpy = dri2_display_create();
-   if (!dri2_dpy)
-      return EGL_FALSE;
+   _EGLDevice *dev;
+   struct dri2_egl_display *dri2_dpy;
 
+   dri2_dpy = calloc(1, sizeof *dri2_dpy);
+   if (!dri2_dpy)
+      return _eglError(EGL_BAD_ALLOC, "eglInitialize");
+
+   dri2_dpy->fd_render_gpu = -1;
+   dri2_dpy->fd_display_gpu = -1;
    if (!dri2_get_xcb_connection(disp, dri2_dpy))
       goto cleanup;
 
    if (!dri2_x11_connect(dri2_dpy))
       goto cleanup;
+
+   dev = _eglFindDevice(dri2_dpy->fd_render_gpu, false);
+   if (!dev) {
+      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to find EGLDevice");
+      goto cleanup;
+   }
+
+   disp->Device = dev;
 
    if (!dri2_load_driver(disp))
       goto cleanup;
@@ -1723,11 +1751,6 @@ dri2_initialize_x11_dri2(_EGLDisplay *disp)
 
    if (!dri2_setup_extensions(disp))
       goto cleanup;
-
-   if (!dri2_setup_device(disp, false)) {
-      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to setup EGLDevice");
-      goto cleanup;
-   }
 
    dri2_setup_screen(disp);
 
@@ -1762,7 +1785,7 @@ cleanup:
 EGLBoolean
 dri2_initialize_x11(_EGLDisplay *disp)
 {
-   if (disp->Options.ForceSoftware || disp->Options.Zink)
+   if (disp->Options.ForceSoftware)
       return dri2_initialize_x11_swrast(disp);
 
 #ifdef HAVE_DRI3

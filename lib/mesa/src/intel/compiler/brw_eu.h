@@ -284,12 +284,6 @@ ALU2(SUBB)
 #undef ALU2
 #undef ALU3
 
-static inline unsigned
-reg_unit(const struct intel_device_info *devinfo)
-{
-   return devinfo->ver >= 20 ? 2 : 1;
-}
-
 
 /* Helpers for SEND instruction:
  */
@@ -305,10 +299,8 @@ brw_message_desc(const struct intel_device_info *devinfo,
                  bool header_present)
 {
    if (devinfo->ver >= 5) {
-      assert(msg_length % reg_unit(devinfo) == 0);
-      assert(response_length % reg_unit(devinfo) == 0);
-      return (SET_BITS(msg_length / reg_unit(devinfo), 28, 25) |
-              SET_BITS(response_length / reg_unit(devinfo), 24, 20) |
+      return (SET_BITS(msg_length, 28, 25) |
+              SET_BITS(response_length, 24, 20) |
               SET_BITS(header_present, 19, 19));
    } else {
       return (SET_BITS(msg_length, 23, 20) |
@@ -320,7 +312,7 @@ static inline unsigned
 brw_message_desc_mlen(const struct intel_device_info *devinfo, uint32_t desc)
 {
    if (devinfo->ver >= 5)
-      return GET_BITS(desc, 28, 25) * reg_unit(devinfo);
+      return GET_BITS(desc, 28, 25);
    else
       return GET_BITS(desc, 23, 20);
 }
@@ -329,7 +321,7 @@ static inline unsigned
 brw_message_desc_rlen(const struct intel_device_info *devinfo, uint32_t desc)
 {
    if (devinfo->ver >= 5)
-      return GET_BITS(desc, 24, 20) * reg_unit(devinfo);
+      return GET_BITS(desc, 24, 20);
    else
       return GET_BITS(desc, 19, 16);
 }
@@ -344,18 +336,17 @@ brw_message_desc_header_present(ASSERTED
 }
 
 static inline unsigned
-brw_message_ex_desc(const struct intel_device_info *devinfo,
+brw_message_ex_desc(UNUSED const struct intel_device_info *devinfo,
                     unsigned ex_msg_length)
 {
-   assert(ex_msg_length % reg_unit(devinfo) == 0);
-   return SET_BITS(ex_msg_length / reg_unit(devinfo), 9, 6);
+   return SET_BITS(ex_msg_length, 9, 6);
 }
 
 static inline unsigned
-brw_message_ex_desc_ex_mlen(const struct intel_device_info *devinfo,
+brw_message_ex_desc_ex_mlen(UNUSED const struct intel_device_info *devinfo,
                             uint32_t ex_desc)
 {
-   return GET_BITS(ex_desc, 9, 6) * reg_unit(devinfo);
+   return GET_BITS(ex_desc, 9, 6);
 }
 
 static inline uint32_t
@@ -1408,22 +1399,22 @@ lsc_vect_size(unsigned vect_size)
 }
 
 static inline uint32_t
-lsc_msg_desc_wcmask(UNUSED const struct intel_device_info *devinfo,
+lsc_msg_desc(UNUSED const struct intel_device_info *devinfo,
              enum lsc_opcode opcode, unsigned simd_size,
              enum lsc_addr_surface_type addr_type,
              enum lsc_addr_size addr_sz, unsigned num_coordinates,
              enum lsc_data_size data_sz, unsigned num_channels,
-             bool transpose, unsigned cache_ctrl, bool has_dest, unsigned cmask)
+             bool transpose, unsigned cache_ctrl, bool has_dest)
 {
    assert(devinfo->has_lsc);
 
    unsigned dest_length = !has_dest ? 0 :
       DIV_ROUND_UP(lsc_data_size_bytes(data_sz) * num_channels * simd_size,
-                   reg_unit(devinfo) * REG_SIZE);
+                   REG_SIZE);
 
    unsigned src0_length =
       DIV_ROUND_UP(lsc_addr_size_bytes(addr_sz) * num_coordinates * simd_size,
-                   reg_unit(devinfo) * REG_SIZE);
+                   REG_SIZE);
 
    assert(!transpose || lsc_opcode_has_transpose(opcode));
 
@@ -1438,24 +1429,11 @@ lsc_msg_desc_wcmask(UNUSED const struct intel_device_info *devinfo,
       SET_BITS(addr_type, 30, 29);
 
    if (lsc_opcode_has_cmask(opcode))
-      msg_desc |= SET_BITS(cmask ? cmask : lsc_cmask(num_channels), 15, 12);
+      msg_desc |= SET_BITS(lsc_cmask(num_channels), 15, 12);
    else
       msg_desc |= SET_BITS(lsc_vect_size(num_channels), 14, 12);
 
    return msg_desc;
-}
-
-static inline uint32_t
-lsc_msg_desc(UNUSED const struct intel_device_info *devinfo,
-             enum lsc_opcode opcode, unsigned simd_size,
-             enum lsc_addr_surface_type addr_type,
-             enum lsc_addr_size addr_sz, unsigned num_coordinates,
-             enum lsc_data_size data_sz, unsigned num_channels,
-             bool transpose, unsigned cache_ctrl, bool has_dest)
-{
-   return lsc_msg_desc_wcmask(devinfo, opcode, simd_size, addr_type, addr_sz,
-         num_coordinates, data_sz, num_channels, transpose, cache_ctrl,
-         has_dest, 0);
 }
 
 static inline enum lsc_opcode
@@ -1521,7 +1499,7 @@ lsc_msg_desc_dest_len(const struct intel_device_info *devinfo,
                       uint32_t desc)
 {
    assert(devinfo->has_lsc);
-   return GET_BITS(desc, 24, 20) * reg_unit(devinfo);
+   return GET_BITS(desc, 24, 20);
 }
 
 static inline unsigned
@@ -1529,7 +1507,7 @@ lsc_msg_desc_src0_len(const struct intel_device_info *devinfo,
                       uint32_t desc)
 {
    assert(devinfo->has_lsc);
-   return GET_BITS(desc, 28, 25) * reg_unit(devinfo);
+   return GET_BITS(desc, 28, 25);
 }
 
 static inline enum lsc_addr_surface_type

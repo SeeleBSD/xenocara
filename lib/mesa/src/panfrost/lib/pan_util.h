@@ -52,8 +52,7 @@
 #define PAN_DBG_OVERFLOW 0x8000
 #endif
 
-#define PAN_DBG_YUV        0x20000
-#define PAN_DBG_FORCE_PACK 0x40000
+#define PAN_DBG_YUV 0x20000
 
 struct panfrost_device;
 

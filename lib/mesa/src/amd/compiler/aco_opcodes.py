@@ -48,7 +48,6 @@ class InstrClass(Enum):
    VMem = 17
    Waitcnt = 18
    Other = 19
-   WMMA = 20
 
 class Format(Enum):
    PSEUDO = 0
@@ -161,11 +160,7 @@ class Format(Enum):
          return [('uint16_t', 'dpp_ctrl', None),
                  ('uint8_t', 'row_mask', '0xF'),
                  ('uint8_t', 'bank_mask', '0xF'),
-                 ('bool', 'bound_ctrl', 'true'),
-                 ('bool', 'fetch_inactive', 'true')]
-      elif self == Format.DPP8:
-         return [('uint32_t', 'lane_sel', 0),
-                 ('bool', 'fetch_inactive', 'true')]
+                 ('bool', 'bound_ctrl', 'true')]
       elif self == Format.VOP3P:
          return [('uint8_t', 'opsel_lo', None),
                  ('uint8_t', 'opsel_hi', None)]
@@ -197,8 +192,6 @@ class Format(Enum):
          for i in range(min(num_operands, 2)):
             res += 'instr->sel[{0}] = SubdwordSel(op{0}.op.bytes(), 0, false);'.format(i)
          res += 'instr->dst_sel = SubdwordSel(def0.bytes(), 0, false);\n'
-      elif self in [Format.DPP16, Format.DPP8]:
-         res += 'instr->fetch_inactive &= program->gfx_level >= GFX10;\n'
       return res
 
 
@@ -335,7 +328,7 @@ opcode("p_reload")
 opcode("p_start_linear_vgpr")
 opcode("p_end_linear_vgpr")
 
-opcode("p_end_wqm")
+opcode("p_wqm")
 opcode("p_discard_if")
 opcode("p_demote_to_helper")
 opcode("p_is_helper")
@@ -1052,12 +1045,6 @@ opcode("v_dot8_i32_iu4", -1, -1, -1, 0x18, Format.VOP3P, InstrClass.Valu32)
 opcode("v_dot8_u32_u4", -1, 0x2b, 0x19, 0x19, Format.VOP3P, InstrClass.Valu32)
 opcode("v_dot2_f32_f16", -1, 0x23, 0x13, 0x13, Format.VOP3P, InstrClass.Valu32)
 opcode("v_dot2_f32_bf16", -1, -1, -1, 0x1a, Format.VOP3P, InstrClass.Valu32)
-opcode("v_wmma_f32_16x16x16_f16", -1, -1, -1, 0x40, Format.VOP3P, InstrClass.WMMA, False, False)
-opcode("v_wmma_f32_16x16x16_bf16", -1, -1, -1, 0x41, Format.VOP3P, InstrClass.WMMA, False, False)
-opcode("v_wmma_f16_16x16x16_f16", -1, -1, -1, 0x42, Format.VOP3P, InstrClass.WMMA, False, False)
-opcode("v_wmma_bf16_16x16x16_bf16", -1, -1, -1, 0x43, Format.VOP3P, InstrClass.WMMA, False, False)
-opcode("v_wmma_i32_16x16x16_iu8", -1, -1, -1, 0x44, Format.VOP3P, InstrClass.WMMA, False, False)
-opcode("v_wmma_i32_16x16x16_iu4", -1, -1, -1, 0x45, Format.VOP3P, InstrClass.WMMA, False, False)
 
 
 # VINTRP (GFX6 - GFX10.3) instructions:
@@ -1081,7 +1068,7 @@ VINTERP = {
    (0x05, "v_interp_p2_rtz_f16_f32_inreg"),
 }
 for (code, name) in VINTERP:
-   opcode(name, -1, -1, -1, code, Format.VINTERP_INREG, InstrClass.Valu32, False, True)
+   opcode(name, -1, -1, -1, code, Format.VINTERP_INREG, InstrClass.Valu32)
 
 
 # VOP3 instructions: 3 inputs, 1 output

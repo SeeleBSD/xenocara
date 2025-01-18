@@ -43,7 +43,6 @@ libpowervr_pds = static_library(
     inc_imagination,
   ],
   c_args : [
-    imagination_c_args,
     no_override_init_args,
   ],
   gnu_symbol_visibility : 'hidden',

@@ -33,7 +33,6 @@ static const struct debug_control vn_debug_options[] = {
    { "log_ctx_info", VN_DEBUG_LOG_CTX_INFO },
    { "cache", VN_DEBUG_CACHE },
    { "no_sparse", VN_DEBUG_NO_SPARSE },
-   { "gpl", VN_DEBUG_GPL },
    { NULL, 0 },
    /* clang-format on */
 };
@@ -49,7 +48,6 @@ static const struct debug_control vn_perf_options[] = {
    { "no_cmd_batching", VN_PERF_NO_CMD_BATCHING },
    { "no_timeline_sem_feedback", VN_PERF_NO_TIMELINE_SEM_FEEDBACK },
    { "no_query_feedback", VN_PERF_NO_QUERY_FEEDBACK },
-   { "no_async_mem_alloc", VN_PERF_NO_ASYNC_MEM_ALLOC },
    { NULL, 0 },
    /* clang-format on */
 };
@@ -168,8 +166,10 @@ vn_relax_init(struct vn_ring *ring, const char *reason)
              ring->monitor.report_period_us);
 #endif
 
-      if (vn_ring_monitor_acquire(ring))
+      if (vn_ring_monitor_acquire(ring)) {
+         ring->monitor.alive = true;
          vn_ring_unset_status_bits(ring, VK_RING_STATUS_ALIVE_BIT_MESA);
+      }
    }
 
    return (struct vn_relax_state){

@@ -96,9 +96,8 @@ void genX(apply_task_urb_workaround)(struct anv_cmd_buffer *cmd_buffer);
 
 void genX(emit_vertex_input)(struct anv_batch *batch,
                              uint32_t *vertex_element_dws,
-                             struct anv_graphics_pipeline *pipeline,
-                             const struct vk_vertex_input_state *vi,
-                             bool emit_in_pipeline);
+                             const struct anv_graphics_pipeline *pipeline,
+                             const struct vk_vertex_input_state *vi);
 
 enum anv_pipe_bits
 genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
@@ -126,11 +125,7 @@ void genX(emit_l3_config)(struct anv_batch *batch,
 void genX(cmd_buffer_config_l3)(struct anv_cmd_buffer *cmd_buffer,
                                 const struct intel_l3_config *cfg);
 
-void genX(cmd_buffer_flush_gfx_hw_state)(struct anv_cmd_buffer *cmd_buffer);
-
-void genX(cmd_buffer_flush_gfx_runtime_state)(struct anv_cmd_buffer *cmd_buffer);
-
-void genX(cmd_buffer_flush_gfx_hw_state)(struct anv_cmd_buffer *cmd_buffer);
+void genX(cmd_buffer_flush_dynamic_state)(struct anv_cmd_buffer *cmd_buffer);
 
 void genX(cmd_buffer_enable_pma_fix)(struct anv_cmd_buffer *cmd_buffer,
                                      bool enable);
@@ -172,12 +167,6 @@ void genX(cmd_buffer_dispatch_kernel)(struct anv_cmd_buffer *cmd_buffer,
 
 void genX(blorp_exec)(struct blorp_batch *batch,
                       const struct blorp_params *params);
-
-void genX(batch_emit_secondary_call)(struct anv_batch *batch,
-                                     struct anv_address secondary_addr,
-                                     struct anv_address secondary_return_addr);
-
-void *genX(batch_emit_return)(struct anv_batch *batch);
 
 void genX(cmd_emit_timestamp)(struct anv_batch *batch,
                               struct anv_device *device,
@@ -230,8 +219,7 @@ genX(cmd_buffer_set_preemption)(struct anv_cmd_buffer *cmd_buffer, bool value);
 void
 genX(batch_emit_pipe_control)(struct anv_batch *batch,
                               const struct intel_device_info *devinfo,
-                              enum anv_pipe_bits bits,
-                              const char *reason);
+                              enum anv_pipe_bits bits);
 
 void
 genX(batch_emit_pipe_control_write)(struct anv_batch *batch,
@@ -239,14 +227,7 @@ genX(batch_emit_pipe_control_write)(struct anv_batch *batch,
                                     uint32_t post_sync_op,
                                     struct anv_address address,
                                     uint32_t imm_data,
-                                    enum anv_pipe_bits bits,
-                                    const char *reason);
-
-#define genx_batch_emit_pipe_control(a, b, c) \
-genX(batch_emit_pipe_control) (a, b, c, __func__)
-
-#define genx_batch_emit_pipe_control_write(a, b, c, d, e, f) \
-genX(batch_emit_pipe_control_write) (a, b, c, d, e, f, __func__)
+                                    enum anv_pipe_bits bits);
 
 void genX(batch_emit_breakpoint)(struct anv_batch *batch,
                                  struct anv_device *device,
@@ -260,28 +241,3 @@ genX(emit_breakpoint)(struct anv_batch *batch,
    if (INTEL_DEBUG(DEBUG_DRAW_BKP))
       genX(batch_emit_breakpoint)(batch, device, emit_before_draw);
 }
-
-struct anv_state
-genX(cmd_buffer_begin_companion_rcs_syncpoint)(struct anv_cmd_buffer *cmd_buffer);
-
-void
-genX(cmd_buffer_end_companion_rcs_syncpoint)(struct anv_cmd_buffer *cmd_buffer,
-                                             struct anv_state syncpoint);
-
-void
-genX(emit_simple_shader_init)(struct anv_simple_shader *state);
-
-void
-genX(emit_simple_shader_dispatch)(struct anv_simple_shader *state,
-                                  uint32_t num_threads,
-                                  struct anv_state push_state);
-
-struct anv_state
-genX(simple_shader_alloc_push)(struct anv_simple_shader *state, uint32_t size);
-
-struct anv_address
-genX(simple_shader_push_state_address)(struct anv_simple_shader *state,
-                                       struct anv_state push_state);
-
-void
-genX(emit_simple_shader_end)(struct anv_simple_shader *state);

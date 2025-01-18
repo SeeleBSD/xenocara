@@ -256,6 +256,10 @@ bo_create_internal(struct zink_screen *screen,
    struct zink_bo *bo = NULL;
    bool init_pb_cache;
 
+   /* too big for vk alloc */
+   if (size > UINT32_MAX)
+      return NULL;
+
    alignment = get_optimal_alignment(screen, size, alignment);
 
    VkMemoryAllocateFlagsInfo ai;
@@ -549,7 +553,7 @@ bo_sparse_create(struct zink_screen *screen, uint64_t size)
    bo->base.alignment_log2 = util_logbase2(ZINK_SPARSE_BUFFER_PAGE_SIZE);
    bo->base.size = size;
    bo->base.vtbl = &bo_sparse_vtbl;
-   unsigned placement = zink_mem_type_idx_from_types(screen, ZINK_HEAP_DEVICE_LOCAL_SPARSE, UINT32_MAX);
+   unsigned placement = zink_mem_type_idx_from_bits(screen, ZINK_HEAP_DEVICE_LOCAL_SPARSE, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
    assert(placement != UINT32_MAX);
    bo->base.placement = placement;
    bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
@@ -959,7 +963,7 @@ zink_bo_commit(struct zink_screen *screen, struct zink_resource *res, unsigned l
    simple_mtx_lock(&screen->queue_lock);
    simple_mtx_lock(&bo->lock);
    if (res->base.b.target == PIPE_BUFFER) {
-      ok = buffer_bo_commit(screen, res, box->x, box->width, commit, &cur_sem);
+      ok = buffer_bo_commit(screen, res, box->x, box->width, commit, sem);
       goto out;
    }
 
@@ -1128,8 +1132,8 @@ zink_bo_commit(struct zink_screen *screen, struct zink_resource *res, unsigned l
                fprintf(stderr, "zink: leaking sparse backing memory\n");
             }
          }
-         ok = false;
       }
+      ok = false;
    }
 out:
 

@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #include "nvk_descriptor_table.h"
 
 #include "nvk_device.h"
@@ -41,7 +37,7 @@ nvk_descriptor_table_grow_locked(struct nvk_device *dev,
       assert(new_bo_size >= table->bo->size);
       memcpy(new_map, table->map, table->bo->size);
 
-      nouveau_ws_bo_unmap(table->bo, table->map);
+      munmap(table->map, table->bo->size);
       nouveau_ws_bo_destroy(table->bo);
    }
    table->bo = new_bo;

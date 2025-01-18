@@ -313,7 +313,7 @@ init_db_template_entry(struct zink_screen *screen, struct zink_shader *shader, e
                        unsigned idx, struct zink_descriptor_template *entry, unsigned *entry_idx)
 {
     int index = shader->bindings[type][idx].index;
-    gl_shader_stage stage = clamp_stage(&shader->info);
+    gl_shader_stage stage = shader->info.stage;
     entry->count = shader->bindings[type][idx].size;
 
     switch (shader->bindings[type][idx].type) {
@@ -692,7 +692,7 @@ zink_descriptor_shader_init(struct zink_screen *screen, struct zink_shader *shad
 {
    VkDescriptorSetLayoutBinding bindings[ZINK_DESCRIPTOR_BASE_TYPES * ZINK_MAX_DESCRIPTORS_PER_TYPE];
    unsigned num_bindings = 0;
-   VkShaderStageFlagBits stage_flags = mesa_to_vk_shader_stage(clamp_stage(&shader->info));
+   VkShaderStageFlagBits stage_flags = mesa_to_vk_shader_stage(shader->info.stage);
 
    unsigned desc_set_size = shader->has_uniforms;
    for (unsigned i = 0; i < ZINK_DESCRIPTOR_BASE_TYPES; i++)
@@ -709,7 +709,7 @@ zink_descriptor_shader_init(struct zink_screen *screen, struct zink_shader *shad
       binding->pImmutableSamplers = NULL;
       struct zink_descriptor_template *entry = &shader->precompile.db_template[num_bindings];
       entry->count = 1;
-      entry->offset = offsetof(struct zink_context, di.db.ubos[clamp_stage(&shader->info)][0]);
+      entry->offset = offsetof(struct zink_context, di.db.ubos[shader->info.stage][0]);
       entry->stride = sizeof(VkDescriptorAddressInfoEXT);
       entry->db_size = screen->info.db_props.robustUniformBufferDescriptorSize;
       num_bindings++;
@@ -1501,7 +1501,7 @@ zink_batch_descriptor_deinit(struct zink_screen *screen, struct zink_batch_state
    }
 
    if (bs->dd.db_xfer)
-      zink_screen_buffer_unmap(&screen->base, bs->dd.db_xfer);
+      pipe_buffer_unmap(&bs->ctx->base, bs->dd.db_xfer);
    bs->dd.db_xfer = NULL;
    if (bs->dd.db)
       screen->base.resource_destroy(&screen->base, &bs->dd.db->base.b);
@@ -1593,7 +1593,7 @@ zink_batch_descriptor_init(struct zink_screen *screen, struct zink_batch_state *
       if (!pres)
          return false;
       bs->dd.db = zink_resource(pres);
-      bs->dd.db_map = pipe_buffer_map(&bs->ctx->base, pres, PIPE_MAP_READ | PIPE_MAP_WRITE | PIPE_MAP_PERSISTENT | PIPE_MAP_COHERENT | PIPE_MAP_THREAD_SAFE, &bs->dd.db_xfer);
+      bs->dd.db_map = pipe_buffer_map(&bs->ctx->base, pres, PIPE_MAP_READ | PIPE_MAP_WRITE | PIPE_MAP_PERSISTENT, &bs->dd.db_xfer);
    }
    return true;
 }

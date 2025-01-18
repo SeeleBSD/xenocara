@@ -1007,36 +1007,32 @@ emit_fragcoord_input(struct v3d_compile *c, int attr)
 
 static struct qreg
 emit_smooth_varying(struct v3d_compile *c,
-                    struct qreg vary, struct qreg w, struct qreg c_reg)
+                    struct qreg vary, struct qreg w, struct qreg r5)
 {
-        return vir_FADD(c, vir_FMUL(c, vary, w), c_reg);
+        return vir_FADD(c, vir_FMUL(c, vary, w), r5);
 }
 
 static struct qreg
 emit_noperspective_varying(struct v3d_compile *c,
-                           struct qreg vary, struct qreg c_reg)
+                           struct qreg vary, struct qreg r5)
 {
-        return vir_FADD(c, vir_MOV(c, vary), c_reg);
+        return vir_FADD(c, vir_MOV(c, vary), r5);
 }
 
 static struct qreg
 emit_flat_varying(struct v3d_compile *c,
-                  struct qreg vary, struct qreg c_reg)
+                  struct qreg vary, struct qreg r5)
 {
         vir_MOV_dest(c, c->undef, vary);
-        return vir_MOV(c, c_reg);
+        return vir_MOV(c, r5);
 }
 
 static struct qreg
 emit_fragment_varying(struct v3d_compile *c, nir_variable *var,
                       int8_t input_idx, uint8_t swizzle, int array_index)
 {
-        struct qreg c_reg; /* C coefficient */
-
-        if (c->devinfo->has_accumulators)
-                c_reg = vir_reg(QFILE_MAGIC, V3D_QPU_WADDR_R5);
-        else
-                c_reg = vir_reg(QFILE_REG, 0);
+        struct qreg r3 = vir_reg(QFILE_MAGIC, V3D_QPU_WADDR_R3);
+        struct qreg r5 = vir_reg(QFILE_MAGIC, V3D_QPU_WADDR_R5);
 
         struct qinst *ldvary = NULL;
         struct qreg vary;
@@ -1047,7 +1043,7 @@ emit_fragment_varying(struct v3d_compile *c, nir_variable *var,
                 vary = vir_emit_def(c, ldvary);
         } else {
                 vir_NOP(c)->qpu.sig.ldvary = true;
-                vary = vir_reg(QFILE_MAGIC, V3D_QPU_WADDR_R3);
+                vary = r3;
         }
 
         /* Store the input value before interpolation so we can implement
@@ -1056,7 +1052,7 @@ emit_fragment_varying(struct v3d_compile *c, nir_variable *var,
         if (input_idx >= 0) {
                 assert(var);
                 c->interp[input_idx].vp = vary;
-                c->interp[input_idx].C = vir_MOV(c, c_reg);
+                c->interp[input_idx].C = vir_MOV(c, r5);
                 c->interp[input_idx].mode = var->data.interpolation;
         }
 
@@ -1066,7 +1062,7 @@ emit_fragment_varying(struct v3d_compile *c, nir_variable *var,
          */
         if (!var) {
                 assert(input_idx < 0);
-                return emit_smooth_varying(c, vary, c->payload_w, c_reg);
+                return emit_smooth_varying(c, vary, c->payload_w, r5);
         }
 
         int i = c->num_inputs++;
@@ -1081,20 +1077,20 @@ emit_fragment_varying(struct v3d_compile *c, nir_variable *var,
                 if (var->data.centroid) {
                         BITSET_SET(c->centroid_flags, i);
                         result = emit_smooth_varying(c, vary,
-                                                     c->payload_w_centroid, c_reg);
+                                                     c->payload_w_centroid, r5);
                 } else {
-                        result = emit_smooth_varying(c, vary, c->payload_w, c_reg);
+                        result = emit_smooth_varying(c, vary, c->payload_w, r5);
                 }
                 break;
 
         case INTERP_MODE_NOPERSPECTIVE:
                 BITSET_SET(c->noperspective_flags, i);
-                result = emit_noperspective_varying(c, vary, c_reg);
+                result = emit_noperspective_varying(c, vary, r5);
                 break;
 
         case INTERP_MODE_FLAT:
                 BITSET_SET(c->flat_shade_flags, i);
-                result = emit_flat_varying(c, vary, c_reg);
+                result = emit_flat_varying(c, vary, r5);
                 break;
 
         default:
@@ -2417,17 +2413,15 @@ ntq_setup_outputs(struct v3d_compile *c)
 
                 switch (var->data.location) {
                 case FRAG_RESULT_COLOR:
-                        for (int i = 0; i < V3D_MAX_DRAW_BUFFERS; i++)
-                                c->output_color_var[i] = var;
+                        c->output_color_var[0] = var;
+                        c->output_color_var[1] = var;
+                        c->output_color_var[2] = var;
+                        c->output_color_var[3] = var;
                         break;
                 case FRAG_RESULT_DATA0:
                 case FRAG_RESULT_DATA1:
                 case FRAG_RESULT_DATA2:
                 case FRAG_RESULT_DATA3:
-                case FRAG_RESULT_DATA4:
-                case FRAG_RESULT_DATA5:
-                case FRAG_RESULT_DATA6:
-                case FRAG_RESULT_DATA7:
                         c->output_color_var[var->data.location -
                                             FRAG_RESULT_DATA0] = var;
                         break;
@@ -3047,46 +3041,6 @@ emit_ldunifa(struct v3d_compile *c, struct qreg *result)
         c->current_unifa_offset += 4;
 }
 
-/* Checks if the value of a nir src is derived from a nir register */
-static bool
-nir_src_derived_from_reg(nir_src src)
-{
-        nir_def *def = src.ssa;
-        if (nir_load_reg_for_def(def))
-                return true;
-
-        nir_instr *parent = def->parent_instr;
-        switch (parent->type) {
-        case nir_instr_type_alu: {
-                nir_alu_instr *alu = nir_instr_as_alu(parent);
-                int num_srcs = nir_op_infos[alu->op].num_inputs;
-                for (int i = 0; i < num_srcs; i++) {
-                        if (nir_src_derived_from_reg(alu->src[i].src))
-                                return true;
-                }
-                return false;
-        }
-        case nir_instr_type_intrinsic: {
-                nir_intrinsic_instr *intr = nir_instr_as_intrinsic(parent);
-                int num_srcs = nir_intrinsic_infos[intr->intrinsic].num_srcs;
-                for (int i = 0; i < num_srcs; i++) {
-                        if (nir_src_derived_from_reg(intr->src[i]))
-                                return true;
-                }
-                return false;
-        }
-        case nir_instr_type_load_const:
-        case nir_instr_type_undef:
-                return false;
-        default:
-                /* By default we assume it may come from a register, the above
-                 * cases should be able to handle the majority of situations
-                 * though.
-                 */
-                return true;
-        };
-}
-
 static bool
 ntq_emit_load_unifa(struct v3d_compile *c, nir_intrinsic_instr *instr)
 {
@@ -3108,24 +3062,6 @@ ntq_emit_load_unifa(struct v3d_compile *c, nir_intrinsic_instr *instr)
         nir_src offset = is_uniform ? instr->src[0] : instr->src[1];
         if (nir_src_is_divergent(offset))
                 return false;
-
-        /* Emitting loads from unifa may not be safe under non-uniform control
-         * flow. It seems the address that is used to write to the unifa
-         * register is taken from the first lane and if that lane is disabled
-         * by control flow then the value we read may be bogus and lead to
-         * invalid memory accesses on follow-up ldunifa instructions. However,
-         * ntq_store_def only emits conditional writes for nir registersas long
-         * we can be certain that the offset isn't derived from a load_reg we
-         * should be fine.
-         *
-         * The following CTS test can be used to trigger the problem, which
-         * causes a GMP violations in the sim without this check:
-         * dEQP-VK.subgroups.ballot_broadcast.graphics.subgroupbroadcastfirst_int
-         */
-        if (vir_in_nonuniform_control_flow(c) &&
-            nir_src_derived_from_reg(offset)) {
-                return false;
-        }
 
         /* We can only use unifa with SSBOs if they are read-only. Otherwise
          * ldunifa won't see the shader writes to that address (possibly
@@ -3299,6 +3235,34 @@ emit_load_local_invocation_index(struct v3d_compile *c)
 {
         return vir_SHR(c, c->cs_payload[1],
                        vir_uniform_ui(c, 32 - c->local_invocation_index_bits));
+}
+
+/* Various subgroup operations rely on the A flags, so this helper ensures that
+ * A flags represents currently active lanes in the subgroup.
+ */
+static void
+set_a_flags_for_subgroup(struct v3d_compile *c)
+{
+        /* MSF returns 0 for disabled lanes in compute shaders so
+         * PUSHZ will set A=1 for disabled lanes. We want the inverse
+         * of this but we don't have any means to negate the A flags
+         * directly, but we can do it by repeating the same operation
+         * with NORZ (A = ~A & ~Z).
+         */
+        assert(c->s->info.stage == MESA_SHADER_COMPUTE);
+        vir_set_pf(c, vir_MSF_dest(c, vir_nop_reg()), V3D_QPU_PF_PUSHZ);
+        vir_set_uf(c, vir_MSF_dest(c, vir_nop_reg()), V3D_QPU_UF_NORZ);
+
+        /* If we are under non-uniform control flow we also need to
+         * AND the A flags with the current execute mask.
+         */
+        if (vir_in_nonuniform_control_flow(c)) {
+                const uint32_t bidx = c->cur_block->index;
+                vir_set_uf(c, vir_XOR_dest(c, vir_nop_reg(),
+                                           c->execute,
+                                           vir_uniform_ui(c, bidx)),
+                           V3D_QPU_UF_ANDZ);
+        }
 }
 
 static void
@@ -3782,23 +3746,10 @@ ntq_emit_intrinsic(struct v3d_compile *c, nir_intrinsic_instr *instr)
                 break;
 
         case nir_intrinsic_elect: {
-                struct qreg first;
-                if (vir_in_nonuniform_control_flow(c)) {
-                        /* Sets A=1 for lanes enabled in the execution mask */
-                        vir_set_pf(c, vir_MOV_dest(c, vir_nop_reg(), c->execute),
-                                   V3D_QPU_PF_PUSHZ);
-                        /* Updates A ANDing with lanes enabled in MSF */
-                        vir_set_uf(c, vir_MSF_dest(c, vir_nop_reg()),
-                                   V3D_QPU_UF_ANDNZ);
-                        first = vir_FLAFIRST(c);
-                } else {
-                        /* Sets A=1 for inactive lanes */
-                        vir_set_pf(c, vir_MSF_dest(c, vir_nop_reg()),
-                                   V3D_QPU_PF_PUSHZ);
-                        first = vir_FLNAFIRST(c);
-                }
+                set_a_flags_for_subgroup(c);
+                struct qreg first = vir_FLAFIRST(c);
 
-                /* Produce a boolean result */
+                /* Produce a boolean result from Flafirst */
                 vir_set_pf(c, vir_XOR_dest(c, vir_nop_reg(),
                                            first, vir_uniform_ui(c, 1)),
                                            V3D_QPU_PF_PUSHZ);
@@ -4015,27 +3966,19 @@ ntq_emit_nonuniform_if(struct v3d_compile *c, nir_if *if_stmt)
                      c->execute,
                      vir_uniform_ui(c, else_block->index));
 
-        /* Set the flags for taking the THEN block */
-        vir_set_pf(c, vir_MOV_dest(c, vir_nop_reg(), c->execute),
-                   V3D_QPU_PF_PUSHZ);
-
         /* Jump to ELSE if nothing is active for THEN (unless THEN block is
          * so small it won't pay off), otherwise fall through.
          */
         bool is_cheap = exec_list_is_singular(&if_stmt->then_list) &&
                         is_cheap_block(nir_if_first_then_block(if_stmt));
         if (!is_cheap) {
+                vir_set_pf(c, vir_MOV_dest(c, vir_nop_reg(), c->execute), V3D_QPU_PF_PUSHZ);
                 vir_BRANCH(c, V3D_QPU_BRANCH_COND_ALLNA);
                 vir_link_blocks(c->cur_block, else_block);
         }
         vir_link_blocks(c->cur_block, then_block);
 
-        /* Process the THEN block.
-         *
-         * Notice we don't call ntq_activate_execute_for_block here on purpose:
-         * c->execute is already set up to be 0 for lanes that must take the
-         * THEN block.
-         */
+        /* Process the THEN block. */
         vir_set_emit_block(c, then_block);
         ntq_emit_cf_list(c, &if_stmt->then_list);
 
@@ -4364,11 +4307,7 @@ nir_to_vir(struct v3d_compile *c)
 {
         switch (c->s->info.stage) {
         case MESA_SHADER_FRAGMENT:
-                if (c->devinfo->ver < 71)
-                        c->payload_w = vir_MOV(c, vir_reg(QFILE_REG, 0));
-                else
-                        c->payload_w = vir_MOV(c, vir_reg(QFILE_REG, 3));
-
+                c->payload_w = vir_MOV(c, vir_reg(QFILE_REG, 0));
                 c->payload_w_centroid = vir_MOV(c, vir_reg(QFILE_REG, 1));
                 c->payload_z = vir_MOV(c, vir_reg(QFILE_REG, 2));
 
@@ -4401,13 +4340,8 @@ nir_to_vir(struct v3d_compile *c)
                                                       V3D_QPU_WADDR_SYNC));
                 }
 
-                if (c->devinfo->ver <= 42) {
-                        c->cs_payload[0] = vir_MOV(c, vir_reg(QFILE_REG, 0));
-                        c->cs_payload[1] = vir_MOV(c, vir_reg(QFILE_REG, 2));
-                } else if (c->devinfo->ver >= 71) {
-                        c->cs_payload[0] = vir_MOV(c, vir_reg(QFILE_REG, 3));
-                        c->cs_payload[1] = vir_MOV(c, vir_reg(QFILE_REG, 2));
-                }
+                c->cs_payload[0] = vir_MOV(c, vir_reg(QFILE_REG, 0));
+                c->cs_payload[1] = vir_MOV(c, vir_reg(QFILE_REG, 2));
 
                 /* Set up the division between gl_LocalInvocationIndex and
                  * wg_in_mem in the payload reg.
@@ -4586,8 +4520,8 @@ vir_check_payload_w(struct v3d_compile *c)
 
         vir_for_each_inst_inorder(inst, c) {
                 for (int i = 0; i < vir_get_nsrc(inst); i++) {
-                        if (inst->src[i].file == c->payload_w.file &&
-                            inst->src[i].index == c->payload_w.index) {
+                        if (inst->src[i].file == QFILE_REG &&
+                            inst->src[i].index == 0) {
                                 c->uses_center_w = true;
                                 return;
                         }

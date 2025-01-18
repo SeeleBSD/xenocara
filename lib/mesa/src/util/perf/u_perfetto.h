@@ -30,21 +30,29 @@
 extern "C" {
 #endif
 
+enum util_perfetto_category {
+   UTIL_PERFETTO_CATEGORY_DEFAULT,
+   UTIL_PERFETTO_CATEGORY_SLOW,
+
+   UTIL_PERFETTO_CATEGORY_COUNT,
+};
+
 #ifdef HAVE_PERFETTO
 
-extern int util_perfetto_tracing_state;
+extern int util_perfetto_category_states[UTIL_PERFETTO_CATEGORY_COUNT];
 
 void util_perfetto_init(void);
 
 static inline bool
-util_perfetto_is_tracing_enabled(void)
+util_perfetto_is_category_enabled(enum util_perfetto_category category)
 {
-   return p_atomic_read_relaxed(&util_perfetto_tracing_state);
+   return p_atomic_read_relaxed(&util_perfetto_category_states[category]);
 }
 
-void util_perfetto_trace_begin(const char *name);
+void util_perfetto_trace_begin(enum util_perfetto_category category,
+                               const char *name);
 
-void util_perfetto_trace_end(void);
+void util_perfetto_trace_end(enum util_perfetto_category category);
 
 #else /* HAVE_PERFETTO */
 
@@ -54,18 +62,19 @@ util_perfetto_init(void)
 }
 
 static inline bool
-util_perfetto_is_tracing_enabled(void)
+util_perfetto_is_category_enabled(enum util_perfetto_category category)
 {
    return false;
 }
 
 static inline void
-util_perfetto_trace_begin(const char *name)
+util_perfetto_trace_begin(enum util_perfetto_category category,
+                          const char *name)
 {
 }
 
 static inline void
-util_perfetto_trace_end(void)
+util_perfetto_trace_end(enum util_perfetto_category category)
 {
 }
 

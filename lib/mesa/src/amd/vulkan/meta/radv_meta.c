@@ -39,15 +39,11 @@
 static void
 radv_suspend_queries(struct radv_meta_saved_state *state, struct radv_cmd_buffer *cmd_buffer)
 {
-   const uint32_t num_pipeline_stat_queries = radv_get_num_pipeline_stat_queries(cmd_buffer);
-
-   if (num_pipeline_stat_queries > 0) {
-      cmd_buffer->state.flush_bits &= ~RADV_CMD_FLAG_START_PIPELINE_STATS;
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_STOP_PIPELINE_STATS;
-   }
-
    /* Pipeline statistics queries. */
    if (cmd_buffer->state.active_pipeline_queries > 0) {
+      cmd_buffer->state.flush_bits &= ~RADV_CMD_FLAG_START_PIPELINE_STATS;
+      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_STOP_PIPELINE_STATS;
+
       state->active_pipeline_gds_queries = cmd_buffer->state.active_pipeline_gds_queries;
       cmd_buffer->state.active_pipeline_gds_queries = 0;
       cmd_buffer->state.dirty |= RADV_CMD_DIRTY_SHADER_QUERY;
@@ -84,15 +80,11 @@ radv_suspend_queries(struct radv_meta_saved_state *state, struct radv_cmd_buffer
 static void
 radv_resume_queries(const struct radv_meta_saved_state *state, struct radv_cmd_buffer *cmd_buffer)
 {
-   const uint32_t num_pipeline_stat_queries = radv_get_num_pipeline_stat_queries(cmd_buffer);
-
-   if (num_pipeline_stat_queries > 0) {
-      cmd_buffer->state.flush_bits &= ~RADV_CMD_FLAG_STOP_PIPELINE_STATS;
-      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_START_PIPELINE_STATS;
-   }
-
    /* Pipeline statistics queries. */
    if (cmd_buffer->state.active_pipeline_queries > 0) {
+      cmd_buffer->state.flush_bits &= ~RADV_CMD_FLAG_STOP_PIPELINE_STATS;
+      cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_START_PIPELINE_STATS;
+
       cmd_buffer->state.active_pipeline_gds_queries = state->active_pipeline_gds_queries;
       cmd_buffer->state.dirty |= RADV_CMD_DIRTY_SHADER_QUERY;
    }
@@ -296,7 +288,7 @@ meta_free(void *_device, void *data)
 static bool
 radv_builtin_cache_path(char *path)
 {
-   char *xdg_cache_home = secure_getenv("XDG_CACHE_HOME");
+   char *xdg_cache_home = getenv("XDG_CACHE_HOME");
    const char *suffix = "/radv_builtin_shaders";
    const char *suffix2 = "/.cache/radv_builtin_shaders";
    struct passwd pwd, *result;
@@ -506,10 +498,6 @@ radv_device_init_meta(struct radv_device *device)
    if (result != VK_SUCCESS)
       goto fail_etc_decode;
 
-   result = radv_device_init_meta_astc_decode_state(device, on_demand);
-   if (result != VK_SUCCESS)
-      goto fail_astc_decode;
-
    if (device->uses_device_generated_commands) {
       result = radv_device_init_dgc_prepare_state(device);
       if (result != VK_SUCCESS)
@@ -543,8 +531,6 @@ fail_accel_struct:
    radv_device_finish_accel_struct_build_state(device);
 fail_dgc:
    radv_device_finish_dgc_prepare_state(device);
-fail_astc_decode:
-   radv_device_finish_meta_astc_decode_state(device);
 fail_etc_decode:
    radv_device_finish_meta_etc_decode_state(device);
 fail_fmask_copy:
@@ -584,7 +570,6 @@ radv_device_finish_meta(struct radv_device *device)
 {
    radv_device_finish_dgc_prepare_state(device);
    radv_device_finish_meta_etc_decode_state(device);
-   radv_device_finish_meta_astc_decode_state(device);
    radv_device_finish_accel_struct_build_state(device);
    radv_device_finish_meta_clear_state(device);
    radv_device_finish_meta_resolve_state(device);

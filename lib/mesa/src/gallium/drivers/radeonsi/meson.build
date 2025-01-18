@@ -18,24 +18,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-si_tracepoints = custom_target(
-  'si_tracepoints.[ch]',
-  input: 'si_tracepoints.py',
-  output: ['si_tracepoints.c', 'si_tracepoints_perfetto.h', 'si_tracepoints.h'],
-  command: [
-    prog_python, '@INPUT@',
-    '-p', join_paths(dir_source_root, 'src/util/perf/'),
-    '-C', '@OUTPUT0@',
-    '--perfetto-hdr', '@OUTPUT1@',
-    '-H', '@OUTPUT2@'
-  ],
-  depend_files: u_trace_py,
-)
-
-idep_si_tracepoints = declare_dependency(
-  sources: si_tracepoints,
-)
-
 files_libradeonsi = files(
   'driinfo_radeonsi.h',
   'gfx10_shader_ngg.c',
@@ -91,8 +73,6 @@ files_libradeonsi = files(
   'si_test_image_copy_region.c',
   'si_test_dma_perf.c',
   'si_texture.c',
-  'si_utrace.c',
-  'si_utrace.h',
   'si_uvd.c',
   'pspdecryptionparam.h',
   'radeon_temporal.h',
@@ -117,22 +97,17 @@ files_libradeonsi = files(
   'radeon_vcn_enc_2_0.c',
   'radeon_vcn_enc_3_0.c',
   'radeon_vcn_enc_4_0.c',
+  'radeon_vcn_enc_av1_default_cdf.h',
   'radeon_video.c',
   'radeon_video.h',
 )
 
 radeonsi_include_dirs = [inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_amd_common,
                          inc_amd_common_llvm, inc_gallium_drivers, inc_compiler]
-radeonsi_deps = [dep_llvm, dep_clock, dep_libdrm_radeon, idep_nir_headers, idep_amdgfxregs_h, idep_mesautil, idep_aco, idep_u_tracepoints, idep_si_tracepoints]
-
-if with_perfetto
-  radeonsi_deps += dep_perfetto
-endif
-
-files_libradeonsi += ['si_perfetto.cpp', 'si_perfetto.h']
+radeonsi_deps = [dep_llvm, dep_clock, dep_libdrm_radeon, idep_nir_headers, idep_amdgfxregs_h, idep_mesautil, idep_aco]
 
 radeonsi_gfx_libs = []
-foreach ver : ['6', '7', '8', '9', '10', '103', '11', '115']
+foreach ver : ['6', '7', '8', '9', '10', '103', '11']
   radeonsi_gfx_libs += static_library(
     'radeonsi_gfx@0@'.format(ver),
     ['si_state_draw.cpp'],

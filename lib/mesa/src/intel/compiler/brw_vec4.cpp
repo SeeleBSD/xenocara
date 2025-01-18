@@ -23,7 +23,6 @@
 
 #include "brw_vec4.h"
 #include "brw_fs.h"
-#include "brw_eu.h"
 #include "brw_cfg.h"
 #include "brw_nir.h"
 #include "brw_vec4_builder.h"
@@ -2398,8 +2397,7 @@ vec4_visitor::run()
       if (INTEL_DEBUG(DEBUG_OPTIMIZER) && this_progress) {             \
          char filename[64];                                            \
          snprintf(filename, 64, "%s-%s-%02d-%02d-" #pass,              \
-                  _mesa_shader_stage_to_abbrev(stage),                 \
-                  nir->info.name, iteration, pass_num);                \
+                  stage_abbrev, nir->info.name, iteration, pass_num); \
                                                                        \
          backend_shader::dump_instructions(filename);                  \
       }                                                                \
@@ -2412,7 +2410,7 @@ vec4_visitor::run()
    if (INTEL_DEBUG(DEBUG_OPTIMIZER)) {
       char filename[64];
       snprintf(filename, 64, "%s-%s-00-00-start",
-               _mesa_shader_stage_to_abbrev(stage), nir->info.name);
+               stage_abbrev, nir->info.name);
 
       backend_shader::dump_instructions(filename);
    }
@@ -2500,7 +2498,7 @@ vec4_visitor::run()
                           "%s shader triggered register spilling.  "
                           "Try reducing the number of live vec4 values "
                           "to improve performance.\n",
-                          _mesa_shader_stage_to_string(stage));
+                          stage_name);
 
       while (!reg_allocate()) {
          if (failed)
@@ -2645,9 +2643,7 @@ brw_compile_vs(const struct brw_compiler *compiler,
          return NULL;
       }
 
-      assert(v.payload().num_regs % reg_unit(compiler->devinfo) == 0);
-      prog_data->base.base.dispatch_grf_start_reg =
-         v.payload().num_regs / reg_unit(compiler->devinfo);
+      prog_data->base.base.dispatch_grf_start_reg = v.payload().num_regs;
 
       fs_generator g(compiler, &params->base,
                      &prog_data->base.base, v.runtime_check_aads_emit,

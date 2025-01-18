@@ -31,7 +31,6 @@
 #define BRW_VEC4_TCS_H
 
 #include "brw_compiler.h"
-#include "brw_eu.h"
 #include "brw_vec4.h"
 
 #ifdef __cplusplus

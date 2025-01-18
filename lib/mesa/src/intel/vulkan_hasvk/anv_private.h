@@ -41,12 +41,12 @@
 #define VG(x) ((void)0)
 #endif
 
+#include "common/intel_clflush.h"
 #include "common/intel_decoder.h"
 #include "common/intel_engine.h"
 #include "common/intel_gem.h"
 #include "common/intel_l3_config.h"
 #include "common/intel_measure.h"
-#include "common/intel_mem.h"
 #include "common/intel_sample_positions.h"
 #include "dev/intel_device_info.h"
 #include "blorp/blorp.h"
@@ -907,7 +907,7 @@ struct anv_physical_device {
       struct anv_memory_type                    types[VK_MAX_MEMORY_TYPES];
       uint32_t                                  heap_count;
       struct anv_memory_heap                    heaps[VK_MAX_MEMORY_HEAPS];
-      bool                                      need_flush;
+      bool                                      need_clflush;
     } memory;
 
     struct anv_memregion                        sys;
@@ -944,7 +944,7 @@ struct anv_instance {
     /**
      * Workarounds for game bugs.
      */
-    uint8_t                                     assume_full_subgroups;
+    bool                                        assume_full_subgroups;
     bool                                        limit_trig_input_range;
     bool                                        sample_mask_out_opengl_behaviour;
     float                                       lower_depth_range_rate;
@@ -1416,7 +1416,7 @@ anv_batch_emit_reloc(struct anv_batch *batch,
 static inline void
 write_reloc(const struct anv_device *device, void *p, uint64_t v, bool flush)
 {
-   UNUSED unsigned reloc_size = 0;
+   unsigned reloc_size = 0;
    if (device->info->ver >= 8) {
       reloc_size = sizeof(uint64_t);
       *(uint64_t *)p = intel_canonical_address(v);
@@ -1425,10 +1425,8 @@ write_reloc(const struct anv_device *device, void *p, uint64_t v, bool flush)
       *(uint32_t *)p = v;
    }
 
-#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
-   if (flush && device->physical->memory.need_flush)
+   if (flush && device->physical->memory.need_clflush)
       intel_flush_range(p, reloc_size);
-#endif
 }
 
 static inline uint64_t

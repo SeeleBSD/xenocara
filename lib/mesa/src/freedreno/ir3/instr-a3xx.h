@@ -131,11 +131,6 @@ typedef enum {
    /* Macros that expand to a loop */
    OPC_SCAN_MACRO      = _OPC(1, 58),
 
-   /* Macros that expand to an stsc at the start of the preamble.
-    * It loads into const file and should not be optimized in any way.
-    */
-   OPC_PUSH_CONSTS_LOAD_MACRO = _OPC(1, 59),
-
    /* category 2: */
    OPC_ADD_F           = _OPC(2, 0),
    OPC_MIN_F           = _OPC(2, 1),
@@ -378,8 +373,6 @@ typedef enum {
 
    OPC_ALIAS           = _OPC(7, 9),
 
-   OPC_CCINV           = _OPC(7, 10),
-
    /* meta instructions (category 8): */
 #define OPC_META 8
    /* placeholder instr to mark shader inputs: */
@@ -411,7 +404,7 @@ typedef enum {
    /*
     * A manually encoded opcode
     */
-   OPC_META_RAW = _OPC(OPC_META, 7),
+   OPC_META_RAW = _OPC(OPC_META, 7)
 } opc_t;
 /* clang-format on */
 

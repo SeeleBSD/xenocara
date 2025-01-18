@@ -52,7 +52,7 @@ vk_instance_init(struct vk_instance *instance,
                  const VkAllocationCallbacks *alloc)
 {
    memset(instance, 0, sizeof(*instance));
-   vk_object_base_instance_init(instance, &instance->base, VK_OBJECT_TYPE_INSTANCE);
+   vk_object_base_init(NULL, &instance->base, VK_OBJECT_TYPE_INSTANCE);
    instance->alloc = *alloc;
 
    util_cpu_trace_init();
@@ -75,8 +75,8 @@ vk_instance_init(struct vk_instance *instance,
          if (!messenger)
             return vk_error(instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-         vk_object_base_instance_init(instance, &messenger->base,
-                                      VK_OBJECT_TYPE_DEBUG_UTILS_MESSENGER_EXT);
+         vk_object_base_init(NULL, &messenger->base,
+                             VK_OBJECT_TYPE_DEBUG_UTILS_MESSENGER_EXT);
 
          messenger->alloc = *alloc;
          messenger->severity = debugMessengerCreateInfo->messageSeverity;
@@ -199,7 +199,7 @@ vk_instance_init(struct vk_instance *instance,
 
    instance->trace_mode = parse_debug_string(getenv("MESA_VK_TRACE"), trace_options);
    instance->trace_frame = (uint32_t)debug_get_num_option("MESA_VK_TRACE_FRAME", 0xFFFFFFFF);
-   instance->trace_trigger_file = secure_getenv("MESA_VK_TRACE_TRIGGER");
+   instance->trace_trigger_file = getenv("MESA_VK_TRACE_TRIGGER");
 
    glsl_type_singleton_init_or_ref();
 

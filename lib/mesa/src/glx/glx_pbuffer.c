@@ -239,7 +239,6 @@ __glXGetDrawableAttribute(Display * dpy, GLXDrawable drawable,
     *     generated."
     */
    if (drawable == 0) {
-      XNoOp(dpy);
       __glXSendError(dpy, GLXBadDrawable, 0, X_GLXGetDrawableAttributes, false);
       return 0;
    }
@@ -270,7 +269,6 @@ __glXGetDrawableAttribute(Display * dpy, GLXDrawable drawable,
       if (pdraw == NULL || gc == &dummyContext || gc->currentDpy != dpy ||
          (gc->currentDrawable != drawable &&
          gc->currentReadable != drawable)) {
-         XNoOp(dpy);
          __glXSendError(dpy, GLXBadDrawable, drawable,
                         X_GLXGetDrawableAttributes, false);
          return 0;

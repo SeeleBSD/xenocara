@@ -1,18 +1,11 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #include "nvk_pipeline.h"
 
 #include "nvk_device.h"
 #include "nvk_physical_device.h"
 #include "nvk_shader.h"
-
+#include "nv_push.h"
 #include "vk_nir.h"
 #include "vk_pipeline.h"
-#include "vk_pipeline_layout.h"
-
-#include "nv_push.h"
 
 #include "nouveau_context.h"
 
@@ -38,20 +31,25 @@ static void
 emit_pipeline_rs_state(struct nv_push *p,
                        const struct vk_rasterization_state *rs)
 {
+   bool depth_clip_enable = vk_rasterization_state_depth_clip_enable(rs);
+   P_IMMD(p, NV9097, SET_VIEWPORT_CLIP_CONTROL, {
+      .min_z_zero_max_z_one      = MIN_Z_ZERO_MAX_Z_ONE_TRUE,
+      .pixel_min_z               = !depth_clip_enable ? PIXEL_MIN_Z_CLAMP : PIXEL_MIN_Z_CLIP,
+      .pixel_max_z               = !depth_clip_enable ? PIXEL_MAX_Z_CLAMP : PIXEL_MAX_Z_CLIP,
+      .geometry_guardband        = GEOMETRY_GUARDBAND_SCALE_256,
+      .line_point_cull_guardband = LINE_POINT_CULL_GUARDBAND_SCALE_256,
+      .geometry_clip             = !rs->depth_clip_enable ? GEOMETRY_CLIP_WZERO_CLIP_NO_Z_CULL : GEOMETRY_CLIP_WZERO_CLIP,
+      .geometry_guardband_z      = GEOMETRY_GUARDBAND_Z_SAME_AS_XY_GUARDBAND,
+   });
+
    P_IMMD(p, NV9097, SET_RASTER_INPUT, rs->rasterization_stream);
 }
 
 static void
 nvk_populate_fs_key(struct nvk_fs_key *key,
-                    const struct vk_multisample_state *ms,
-                    const struct vk_render_pass_state *rp)
+                    const struct vk_multisample_state *ms)
 {
    memset(key, 0, sizeof(*key));
-
-   if (rp->pipeline_flags &
-       VK_PIPELINE_CREATE_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT)
-      key->zs_self_dep = true;
-
    if (ms == NULL || ms->rasterization_samples <= 1)
       return;
 
@@ -141,6 +139,7 @@ static void
 emit_pipeline_cb_state(struct nv_push *p,
                        const struct vk_color_blend_state *cb)
 {
+   bool indep_color_masks = true;
    P_IMMD(p, NV9097, SET_BLEND_STATE_PER_TARGET, ENABLE_TRUE);
 
    for (uint32_t a = 0; a < cb->attachment_count; a++) {
@@ -161,41 +160,15 @@ emit_pipeline_cb_state(struct nv_push *p,
          vk_to_nv9097_blend_factor(att->src_alpha_blend_factor));
       P_NV9097_SET_BLEND_PER_TARGET_ALPHA_DEST_COEFF(p, a,
          vk_to_nv9097_blend_factor(att->dst_alpha_blend_factor));
-   }
-}
 
-static void
-emit_pipeline_ct_write_state(struct nv_push *p,
-                             const struct vk_color_blend_state *cb,
-                             const struct vk_render_pass_state *rp)
-{
-   uint32_t att_write_masks[8] = {};
-   uint32_t att_count = 0;
-
-   if (rp != NULL) {
-      att_count = rp->color_attachment_count;
-      for (uint32_t a = 0; a < rp->color_attachment_count; a++) {
-         VkFormat att_format = rp->color_attachment_formats[a];
-         att_write_masks[a] = att_format == VK_FORMAT_UNDEFINED ? 0 : 0xf;
-      }
-   }
-
-   if (cb != NULL) {
-      assert(cb->attachment_count == att_count);
-      for (uint32_t a = 0; a < cb->attachment_count; a++)
-         att_write_masks[a] &= cb->attachments[a].write_mask;
-   }
-
-   bool indep_color_masks = true;
-   for (uint32_t a = 0; a < att_count; a++) {
       P_IMMD(p, NV9097, SET_CT_WRITE(a), {
-         .r_enable = (att_write_masks[a] & BITFIELD_BIT(0)) != 0,
-         .g_enable = (att_write_masks[a] & BITFIELD_BIT(1)) != 0,
-         .b_enable = (att_write_masks[a] & BITFIELD_BIT(2)) != 0,
-         .a_enable = (att_write_masks[a] & BITFIELD_BIT(3)) != 0,
+         .r_enable = (att->write_mask & BITFIELD_BIT(0)) != 0,
+         .g_enable = (att->write_mask & BITFIELD_BIT(1)) != 0,
+         .b_enable = (att->write_mask & BITFIELD_BIT(2)) != 0,
+         .a_enable = (att->write_mask & BITFIELD_BIT(3)) != 0,
       });
 
-      if (att_write_masks[a] != att_write_masks[0])
+      if (att->write_mask != cb->attachments[0].write_mask)
          indep_color_masks = false;
    }
 
@@ -334,8 +307,14 @@ nvk_graphics_pipeline_create(struct nvk_device *dev,
       vk_pipeline_robustness_state_fill(&dev->vk, &robustness[stage],
                                         pCreateInfo->pNext, sinfo->pNext);
 
-      result = nvk_shader_stage_to_nir(dev, sinfo, &robustness[stage],
-                                       cache, NULL, &nir[stage]);
+      const nir_shader_compiler_options *nir_options =
+         nvk_physical_device_nir_options(pdev, stage);
+      const struct spirv_to_nir_options spirv_options =
+         nvk_physical_device_spirv_options(pdev, &robustness[stage]);
+
+      result = vk_pipeline_shader_stage_to_nir(&dev->vk, sinfo,
+                                               &spirv_options, nir_options,
+                                               NULL, &nir[stage]);
       if (result != VK_SUCCESS)
          goto fail;
    }
@@ -358,7 +337,7 @@ nvk_graphics_pipeline_create(struct nvk_device *dev,
 
       struct nvk_fs_key fs_key_tmp, *fs_key = NULL;
       if (stage == MESA_SHADER_FRAGMENT) {
-         nvk_populate_fs_key(&fs_key_tmp, state.ms, state.rp);
+         nvk_populate_fs_key(&fs_key_tmp, state.ms);
          fs_key = &fs_key_tmp;
       }
 
@@ -496,7 +475,6 @@ nvk_graphics_pipeline_create(struct nvk_device *dev,
    if (state.rs) emit_pipeline_rs_state(&push, state.rs);
    if (state.ms) emit_pipeline_ms_state(&push, state.ms, force_max_samples);
    if (state.cb) emit_pipeline_cb_state(&push, state.cb);
-   emit_pipeline_ct_write_state(&push, state.cb, state.rp);
 
    pipeline->push_dw_count = nv_push_dw_count(&push);
 

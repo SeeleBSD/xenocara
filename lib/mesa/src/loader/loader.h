@@ -43,15 +43,8 @@ struct __DRIextensionRec;
 int
 loader_open_device(const char *);
 
-char *
-loader_get_kernel_driver_name(int fd);
-
 int
-loader_open_render_node_platform_device(const char * const drivers[],
-                                        unsigned int n_drivers);
-
-bool
-loader_is_device_render_capable(int fd);
+loader_open_render_node(const char *name);
 
 char *
 loader_get_render_node(dev_t device);

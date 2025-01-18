@@ -78,6 +78,7 @@
 #include "string_to_uint_map.h"
 #include "linker.h"
 #include "linker_util.h"
+#include "link_varyings.h"
 #include "ir_optimization.h"
 #include "ir_rvalue_visitor.h"
 #include "ir_uniform.h"
@@ -787,7 +788,7 @@ validate_intrastage_arrays(struct gl_shader_program *prog,
                            "`%s' but outermost dimension has an index"
                            " of `%i'\n",
                            mode_string(var),
-                           var->name, glsl_get_type_name(var->type),
+                           var->name, var->type->name,
                            existing->data.max_array_access);
             }
             existing->type = var->type;
@@ -799,7 +800,7 @@ validate_intrastage_arrays(struct gl_shader_program *prog,
                            "`%s' but outermost dimension has an index"
                            " of `%i'\n",
                            mode_string(var),
-                           var->name, glsl_get_type_name(existing->type),
+                           var->name, existing->type->name,
                            var->data.max_array_access);
             }
             return true;
@@ -868,8 +869,8 @@ cross_validate_globals(const struct gl_constants *consts,
                   linker_error(prog, "%s `%s' declared as type "
                                  "`%s' and type `%s'\n",
                                  mode_string(var),
-                                 var->name, glsl_get_type_name(var->type),
-                                 glsl_get_type_name(existing->type));
+                                 var->name, var->type->name,
+                                 existing->type->name);
                   return;
                }
             }
@@ -1075,14 +1076,14 @@ cross_validate_globals(const struct gl_constants *consts,
                linker_error(prog, "declarations for %s `%s` are inside block "
                             "`%s` and outside a block",
                             mode_string(var), var->name,
-                            glsl_get_type_name(var_itype ? var_itype : existing_itype));
+                            var_itype ? var_itype->name : existing_itype->name);
                return;
-            } else if (strcmp(glsl_get_type_name(var_itype), glsl_get_type_name(existing_itype)) != 0) {
+            } else if (strcmp(var_itype->name, existing_itype->name) != 0) {
                linker_error(prog, "declarations for %s `%s` are inside blocks "
                             "`%s` and `%s`",
                             mode_string(var), var->name,
-                            glsl_get_type_name(existing_itype),
-                            glsl_get_type_name(var_itype));
+                            existing_itype->name,
+                            var_itype->name);
                return;
             }
          }
@@ -1583,7 +1584,7 @@ private:
       bool row_major = (bool) type->interface_row_major;
       const glsl_type *new_ifc_type =
          glsl_type::get_interface_instance(fields, num_fields,
-                                           packing, row_major, glsl_get_type_name(type));
+                                           packing, row_major, type->name);
       delete [] fields;
       return new_ifc_type;
    }
@@ -1614,7 +1615,7 @@ private:
       bool row_major = (bool) ifc_type->interface_row_major;
       const glsl_type *new_ifc_type =
          glsl_type::get_interface_instance(fields, num_fields, packing,
-                                           row_major, glsl_get_type_name(ifc_type));
+                                           row_major, ifc_type->name);
       delete [] fields;
       for (unsigned i = 0; i < num_fields; i++) {
          if (interface_vars[i] != NULL)
@@ -1945,8 +1946,7 @@ static void
 link_fs_inout_layout_qualifiers(struct gl_shader_program *prog,
                                 struct gl_linked_shader *linked_shader,
                                 struct gl_shader **shader_list,
-                                unsigned num_shaders,
-                                bool arb_fragment_coord_conventions_enable)
+                                unsigned num_shaders)
 {
    bool redeclares_gl_fragcoord = false;
    bool uses_gl_fragcoord = false;
@@ -1954,7 +1954,8 @@ link_fs_inout_layout_qualifiers(struct gl_shader_program *prog,
    bool pixel_center_integer = false;
 
    if (linked_shader->Stage != MESA_SHADER_FRAGMENT ||
-       (prog->GLSL_Version < 150 && !arb_fragment_coord_conventions_enable))
+       (prog->GLSL_Version < 150 &&
+        !prog->ARB_fragment_coord_conventions_enable))
       return;
 
    for (unsigned i = 0; i < num_shaders; i++) {
@@ -2300,7 +2301,6 @@ link_intrastage_shaders(void *mem_ctx,
    struct gl_uniform_block *ssbo_blocks = NULL;
    unsigned num_ubo_blocks = 0;
    unsigned num_ssbo_blocks = 0;
-   bool arb_fragment_coord_conventions_enable = false;
 
    /* Check that global variables defined in multiple shaders are consistent.
     */
@@ -2310,8 +2310,6 @@ link_intrastage_shaders(void *mem_ctx,
          continue;
       cross_validate_globals(&ctx->Const, prog, shader_list[i]->ir, &variables,
                              false);
-      if (shader_list[i]->ARB_fragment_coord_conventions_enable)
-         arb_fragment_coord_conventions_enable = true;
    }
 
    if (!prog->data->LinkStatus)
@@ -2405,8 +2403,7 @@ link_intrastage_shaders(void *mem_ctx,
    linked->ir = new(linked) exec_list;
    clone_ir_list(mem_ctx, linked->ir, main->ir);
 
-   link_fs_inout_layout_qualifiers(prog, linked, shader_list, num_shaders,
-                                   arb_fragment_coord_conventions_enable);
+   link_fs_inout_layout_qualifiers(prog, linked, shader_list, num_shaders);
    link_tcs_out_layout_qualifiers(prog, gl_prog, shader_list, num_shaders);
    link_tes_in_layout_qualifiers(prog, gl_prog, shader_list, num_shaders);
    link_gs_inout_layout_qualifiers(prog, gl_prog, shader_list, num_shaders);
@@ -2912,6 +2909,8 @@ link_shaders(struct gl_context *ctx, struct gl_shader_program *prog)
 
    void *mem_ctx = ralloc_context(NULL); // temporary linker context
 
+   prog->ARB_fragment_coord_conventions_enable = false;
+
    /* Separate the shaders into groups based on their type.
     */
    struct gl_shader **shader_list[MESA_SHADER_STAGES];
@@ -2934,6 +2933,10 @@ link_shaders(struct gl_context *ctx, struct gl_shader_program *prog)
          linker_error(prog, "all shaders must use same shading "
                       "language version\n");
          goto done;
+      }
+
+      if (prog->Shaders[i]->ARB_fragment_coord_conventions_enable) {
+         prog->ARB_fragment_coord_conventions_enable = true;
       }
 
       gl_shader_stage shader_type = prog->Shaders[i]->Stage;
@@ -3075,15 +3078,18 @@ link_shaders(struct gl_context *ctx, struct gl_shader_program *prog)
    if (!prog->data->LinkStatus)
       goto done;
 
-   unsigned first, prev;
+   unsigned first, last, prev;
 
    first = MESA_SHADER_STAGES;
+   last = 0;
+
    /* Determine first and last stage. */
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
       if (!prog->_LinkedShaders[i])
          continue;
       if (first == MESA_SHADER_STAGES)
          first = i;
+      last = i;
    }
 
    check_explicit_uniform_locations(&ctx->Extensions, prog);
@@ -3108,8 +3114,23 @@ link_shaders(struct gl_context *ctx, struct gl_shader_program *prog)
       if (!prog->data->LinkStatus)
          goto done;
 
+      cross_validate_outputs_to_inputs(consts, prog,
+                                       prog->_LinkedShaders[prev],
+                                       prog->_LinkedShaders[i]);
+      if (!prog->data->LinkStatus)
+         goto done;
+
       prev = i;
    }
+
+   /* The cross validation of outputs/inputs above validates interstage
+    * explicit locations. We need to do this also for the inputs in the first
+    * stage and outputs of the last stage included in the program, since there
+    * is no cross validation for these.
+    */
+   validate_first_and_last_interface_explicit_locations(consts, prog,
+                                                        (gl_shader_stage) first,
+                                                        (gl_shader_stage) last);
 
    /* Cross-validate uniform blocks between shader stages */
    validate_interstage_uniform_blocks(prog, prog->_LinkedShaders);

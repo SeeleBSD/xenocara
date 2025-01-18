@@ -21,7 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-#if defined(HAVE_DL_ITERATE_PHDR) && defined(HAVE_LD_BUILD_ID)
+#ifdef HAVE_DL_ITERATE_PHDR
 #include <dlfcn.h>
 #include <link.h>
 #include <stddef.h>

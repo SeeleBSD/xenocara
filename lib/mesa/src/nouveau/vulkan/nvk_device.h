@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #ifndef NVK_DEVICE_H
 #define NVK_DEVICE_H 1
 
@@ -16,7 +12,6 @@
 
 struct novueau_ws_context;
 struct nvk_physical_device;
-struct vk_pipeline_cache;
 
 struct nvk_slm_area {
    simple_mtx_t mutex;
@@ -37,6 +32,9 @@ struct nvk_device {
    struct nouveau_ws_device *ws_dev;
    struct nouveau_ws_context *ws_ctx;
 
+   /* Protected by nvk_device::mutex */
+   struct list_head memory_objects;
+
    struct nvk_descriptor_table images;
    struct nvk_descriptor_table samplers;
    struct nvk_heap shader_heap;
@@ -47,7 +45,8 @@ struct nvk_device {
 
    struct nvk_queue queue;
 
-   struct vk_pipeline_cache *mem_cache;
+   pthread_mutex_t mutex;
+   pthread_cond_t queue_submit;
 
    struct vk_meta_device meta;
 };

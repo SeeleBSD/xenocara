@@ -212,7 +212,13 @@ fn flush(command_queue: cl_command_queue) -> CLResult<()> {
 #[cl_entrypoint]
 fn finish(command_queue: cl_command_queue) -> CLResult<()> {
     // CL_INVALID_COMMAND_QUEUE if command_queue is not a valid host command-queue.
-    command_queue.get_ref()?.flush(true)
+    let q = command_queue.get_ref()?;
+
+    for q in q.dependencies_for_pending_events() {
+        q.flush(false)?;
+    }
+
+    q.flush(true)
 }
 
 #[cl_entrypoint]

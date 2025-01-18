@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd.
- * SPDX-License-Identifier: MIT
- */
 #include "nil_image.h"
 
 #include "util/u_math.h"
@@ -67,13 +63,13 @@ nil_offset4d_mul(struct nil_offset4d a, struct nil_extent4d b)
 }
 
 static struct nil_extent4d
-nil_extent4d_align(struct nil_extent4d ext, struct nil_extent4d alignment)
+nil_extent4d_align(struct nil_extent4d ext, struct nil_extent4d align)
 {
    return (struct nil_extent4d) {
-      .w = align(ext.w, alignment.w),
-      .h = align(ext.h, alignment.h),
-      .d = align(ext.d, alignment.d),
-      .a = align(ext.a, alignment.a),
+      .w = ALIGN_POT(ext.w, align.w),
+      .h = ALIGN_POT(ext.h, align.h),
+      .d = ALIGN_POT(ext.d, align.d),
+      .a = ALIGN_POT(ext.a, align.a),
    };
 }
 

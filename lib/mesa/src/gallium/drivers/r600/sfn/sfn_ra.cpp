@@ -114,7 +114,7 @@ group_allocation(LiveRangeMap& lrm,
       if (group.priority > 0)
          color = 0;
 
-      while (color < g_registers_end) {
+      while (color < 124) {
          /* Find the coloring for the first channel */
          bool color_in_use = false;
          int comp = start_comp;
@@ -181,7 +181,7 @@ group_allocation(LiveRangeMap& lrm,
          break;
       }
 
-      if (color == g_registers_end)
+      if (color == 124)
          return false;
    }
 
@@ -206,7 +206,7 @@ scalar_allocation(LiveRangeMap& lrm, const Interference& interference)
 
          int color = 0;
 
-         while (color < g_registers_end) {
+         while (color < 124) {
             bool color_in_use = false;
             for (auto adj : adjecency) {
                if (live_ranges[adj].m_color == color) {
@@ -223,7 +223,7 @@ scalar_allocation(LiveRangeMap& lrm, const Interference& interference)
             r.m_color = color;
             break;
          }
-         if (color == g_registers_end)
+         if (color == 124)
             return false;
       }
    }

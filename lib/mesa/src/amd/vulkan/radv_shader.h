@@ -85,7 +85,6 @@ struct radv_pipeline_key {
    uint32_t use_ngg : 1;
    uint32_t adjust_frag_coord_z : 1;
    uint32_t disable_aniso_single_level : 1;
-   uint32_t disable_trunc_coord : 1;
    uint32_t disable_sinking_load_input_fs : 1;
    uint32_t image_2d_view_of_3d : 1;
    uint32_t primitives_generated_query : 1;
@@ -95,13 +94,10 @@ struct radv_pipeline_key {
    uint32_t dynamic_provoking_vtx_mode : 1;
    uint32_t dynamic_line_rast_mode : 1;
    uint32_t tex_non_uniform : 1;
-   uint32_t ssbo_non_uniform : 1;
    uint32_t enable_remove_point_size : 1;
    uint32_t unknown_rast_prim : 1;
-   uint32_t mesh_shader_queries : 1;
 
    uint32_t vertex_robustness1 : 1;
-   uint32_t mesh_fast_launch_2 : 1;
 
    struct radv_shader_stage_key stage_info[MESA_VULKAN_SHADER_STAGES];
 
@@ -315,8 +311,8 @@ struct radv_shader_info {
    uint32_t user_data_0;
    bool inputs_linked;
    bool outputs_linked;
-   bool has_epilog;                        /* Only for TCS or PS */
-   bool merged_shader_compiled_separately; /* GFX9+ */
+   bool has_epilog;    /* Only for TCS or PS */
+   bool is_monolithic; /* False only for merged shaders which are compiled separately */
 
    struct {
       uint8_t input_usage_mask[RADV_VERT_ATTRIB_MAX];
@@ -432,7 +428,6 @@ struct radv_shader_info {
       bool uses_rt;
       bool uses_full_subgroups;
       bool linear_taskmesh_dispatch;
-      bool has_query; /* Task shader only */
 
       bool regalloc_hang_bug;
    } cs;
@@ -450,7 +445,6 @@ struct radv_shader_info {
       enum mesa_prim output_prim;
       bool needs_ms_scratch_ring;
       bool has_task; /* If mesh shader is used together with a task shader. */
-      bool has_query;
    } ms;
 
    struct radv_streamout_info so;
@@ -637,8 +631,7 @@ nir_shader *radv_parse_rt_stage(struct radv_device *device, const VkPipelineShad
 
 void radv_nir_lower_rt_abi(nir_shader *shader, const VkRayTracingPipelineCreateInfoKHR *pCreateInfo,
                            const struct radv_shader_args *args, const struct radv_shader_info *info,
-                           uint32_t *stack_size, bool resume_shader, struct radv_device *device,
-                           struct radv_ray_tracing_pipeline *pipeline, bool monolithic);
+                           uint32_t *stack_size, bool resume_shader);
 
 struct radv_shader_stage;
 
@@ -859,7 +852,8 @@ bool radv_consider_culling(const struct radv_physical_device *pdevice, struct ni
 void radv_get_nir_options(struct radv_physical_device *device);
 
 nir_shader *radv_build_traversal_shader(struct radv_device *device, struct radv_ray_tracing_pipeline *pipeline,
-                                        const VkRayTracingPipelineCreateInfoKHR *pCreateInfo);
+                                        const VkRayTracingPipelineCreateInfoKHR *pCreateInfo,
+                                        const struct radv_pipeline_key *key);
 
 enum radv_rt_priority {
    radv_rt_priority_raygen = 0,

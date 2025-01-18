@@ -94,16 +94,38 @@ matrix_multiply(struct vtn_builder *b,
       transpose_result = true;
    }
 
-   for (unsigned i = 0; i < src1_columns; i++) {
-      /* dest[i] = sum(src0[j] * src1[i][j] for all j) */
-      dest->elems[i]->def =
-         nir_fmul(&b->nb, src0->elems[src0_columns - 1]->def,
-                  nir_channel(&b->nb, src1->elems[i]->def, src0_columns - 1));
-      for (int j = src0_columns - 2; j >= 0; j--) {
+   if (src0_transpose && !src1_transpose &&
+       glsl_get_base_type(src0->type) == GLSL_TYPE_FLOAT) {
+      /* We already have the rows of src0 and the columns of src1 available,
+       * so we can just take the dot product of each row with each column to
+       * get the result.
+       */
+
+      for (unsigned i = 0; i < src1_columns; i++) {
+         nir_def *vec_src[4];
+         for (unsigned j = 0; j < src0_rows; j++) {
+            vec_src[j] = nir_fdot(&b->nb, src0_transpose->elems[j]->def,
+                                          src1->elems[i]->def);
+         }
+         dest->elems[i]->def = nir_vec(&b->nb, vec_src, src0_rows);
+      }
+   } else {
+      /* We don't handle the case where src1 is transposed but not src0, since
+       * the general case only uses individual components of src1 so the
+       * optimizer should chew through the transpose we emitted for src1.
+       */
+
+      for (unsigned i = 0; i < src1_columns; i++) {
+         /* dest[i] = sum(src0[j] * src1[i][j] for all j) */
          dest->elems[i]->def =
-            nir_ffma(&b->nb, src0->elems[j]->def,
-                             nir_channel(&b->nb, src1->elems[i]->def, j),
-                             dest->elems[i]->def);
+            nir_fmul(&b->nb, src0->elems[src0_columns - 1]->def,
+                     nir_channel(&b->nb, src1->elems[i]->def, src0_columns - 1));
+         for (int j = src0_columns - 2; j >= 0; j--) {
+            dest->elems[i]->def =
+               nir_ffma(&b->nb, src0->elems[j]->def,
+                                nir_channel(&b->nb, src1->elems[i]->def, j),
+                                dest->elems[i]->def);
+         }
       }
    }
 
@@ -574,11 +596,6 @@ vtn_handle_alu(struct vtn_builder *b, SpvOp opcode,
 {
    struct vtn_value *dest_val = vtn_untyped_value(b, w[2]);
    const struct glsl_type *dest_type = vtn_get_type(b, w[1])->type;
-
-   if (glsl_type_is_cmat(dest_type)) {
-      vtn_handle_cooperative_alu(b, dest_val, dest_type, opcode, w, count);
-      return;
-   }
 
    vtn_handle_no_contraction(b, dest_val);
    bool mediump_16bit = vtn_alu_op_mediump_16bit(b, opcode, dest_val);
@@ -1280,11 +1297,6 @@ vtn_handle_bitcast(struct vtn_builder *b, const uint32_t *w, unsigned count)
     */
 
    struct vtn_type *type = vtn_get_type(b, w[1]);
-   if (type->base_type == vtn_base_type_cooperative_matrix) {
-      vtn_handle_cooperative_instruction(b, SpvOpBitcast, w, count);
-      return;
-   }
-
    struct nir_def *src = vtn_get_nir_ssa(b, w[3]);
 
    vtn_fail_if(src->num_components * src->bit_size !=

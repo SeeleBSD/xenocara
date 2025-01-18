@@ -146,11 +146,6 @@ validate_ir(Program* program)
                   "Format cannot have DPP applied", instr.get());
             check((!instr->isVOP3() && !instr->isVOP3P()) || program->gfx_level >= GFX11,
                   "VOP3+DPP is GFX11+ only", instr.get());
-
-            bool fi =
-               instr->isDPP8() ? instr->dpp8().fetch_inactive : instr->dpp16().fetch_inactive;
-            check(!fi || program->gfx_level >= GFX10, "DPP Fetch-Inactive is GFX10+ only",
-                  instr.get());
          }
 
          /* check SDWA */
@@ -259,9 +254,8 @@ validate_ir(Program* program)
                   check(!vop3p.opsel_lo[i] && !vop3p.opsel_hi[i],
                         "Unexpected opsel for subdword operand", instr.get());
             }
-            check(instr->definitions[0].regClass() == v1 ||
-                     instr_info.classes[(int)instr->opcode] == instr_class::wmma,
-                  "VOP3P must have v1 definition", instr.get());
+            check(instr->definitions[0].regClass() == v1, "VOP3P must have v1 definition",
+                  instr.get());
          }
 
          /* check for undefs */
@@ -474,7 +468,8 @@ validate_ir(Program* program)
                      check(program->gfx_level >= GFX9 || !def.regClass().is_subdword(),
                            "Cannot split SGPR into subdword VGPRs before GFX9+", instr.get());
                }
-            } else if (instr->opcode == aco_opcode::p_parallelcopy) {
+            } else if (instr->opcode == aco_opcode::p_parallelcopy ||
+                       instr->opcode == aco_opcode::p_wqm) {
                check(instr->definitions.size() == instr->operands.size(),
                      "Number of Operands does not match number of Definitions", instr.get());
                for (unsigned i = 0; i < instr->operands.size(); i++) {
@@ -566,9 +561,9 @@ validate_ir(Program* program)
             } else if (instr->opcode == aco_opcode::p_dual_src_export_gfx11) {
                check(instr->definitions.size() == 6,
                      "p_dual_src_export_gfx11 must have 6 definitions", instr.get());
-               check(instr->definitions[2].regClass() == program->lane_mask,
-                     "Third definition of p_dual_src_export_gfx11 must be a lane mask",
-                     instr.get());
+               check(instr->definitions[2].regClass().type() == RegType::vgpr &&
+                        instr->definitions[2].regClass().size() == 1,
+                     "Third definition of p_dual_src_export_gfx11 must be a v1", instr.get());
                check(instr->definitions[3].regClass() == program->lane_mask,
                      "Fourth definition of p_dual_src_export_gfx11 must be a lane mask",
                      instr.get());

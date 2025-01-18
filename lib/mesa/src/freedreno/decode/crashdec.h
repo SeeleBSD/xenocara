@@ -56,25 +56,25 @@ extern struct cffdec_options options;
 static inline bool
 is_a6xx(void)
 {
-   return options.info->chip == 6;
+   return (600 <= options.gpu_id) && (options.gpu_id < 700);
 }
 
 static inline bool
 is_a5xx(void)
 {
-   return options.info->chip == 5;
+   return (500 <= options.gpu_id) && (options.gpu_id < 600);
 }
 
 static inline bool
 is_64b(void)
 {
-   return options.info->chip >= 5;
+   return options.gpu_id >= 500;
 }
 
 static inline bool
 is_gmu_legacy(void)
 {
-   switch (options.dev_id.gpu_id) {
+   switch (options.gpu_id) {
    case 615:
    case 618:
    case 630:

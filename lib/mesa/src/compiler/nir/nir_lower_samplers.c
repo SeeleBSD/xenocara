@@ -76,7 +76,7 @@ lower_tex_src_to_offset(nir_builder *b,
 
          index = nir_iadd(b, index,
                           nir_imul_imm(b,
-                                       deref->arr.index.ssa,
+                                       nir_ssa_for_src(b, deref->arr.index, 1),
                                        array_elements));
       }
 

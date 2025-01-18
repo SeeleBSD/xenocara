@@ -261,7 +261,7 @@ public:
       } else {
          const struct hash_entry *entry =
             _mesa_hash_table_search(ht,
-               glsl_get_type_name(var->get_interface_type()->without_array()));
+               var->get_interface_type()->without_array()->name);
          return entry ? (ir_variable *) entry->data : NULL;
       }
    }
@@ -283,7 +283,7 @@ public:
          _mesa_hash_table_insert(ht, ralloc_strdup(mem_ctx, location_str), var);
       } else {
          _mesa_hash_table_insert(ht,
-            glsl_get_type_name(var->get_interface_type()->without_array()), var);
+            var->get_interface_type()->without_array()->name, var);
       }
    }
 
@@ -359,7 +359,7 @@ validate_intrastage_interface_blocks(struct gl_shader_program *prog,
          } else if (!intrastage_match(prev_def, var, prog,
                                       true /* match_precision */)) {
             linker_error(prog, "definitions of interface block `%s' do not"
-                         " match\n", glsl_get_type_name(iface_type));
+                         " match\n", iface_type->name);
             return;
          }
       }
@@ -461,7 +461,7 @@ validate_interstage_inout_blocks(struct gl_shader_program *prog,
           var->data.used && !producer_iface) {
          linker_error(prog, "missing output builtin block %s redeclaration "
                       "in separable shader program",
-                      glsl_get_type_name(var->get_interface_type()));
+                      var->get_interface_type()->name);
          return;
       }
 
@@ -482,7 +482,7 @@ validate_interstage_inout_blocks(struct gl_shader_program *prog,
           var->data.used && !producer_iface) {
          linker_error(prog, "missing input builtin block %s redeclaration "
                       "in separable shader program",
-                      glsl_get_type_name(var->get_interface_type()));
+                      var->get_interface_type()->name);
          return;
       }
 
@@ -501,14 +501,14 @@ validate_interstage_inout_blocks(struct gl_shader_program *prog,
       if (producer_def == NULL &&
           !is_builtin_gl_in_block(var, consumer->Stage) && var->data.used) {
          linker_error(prog, "Input block `%s' is not an output of "
-                      "the previous stage\n", glsl_get_type_name(var->get_interface_type()));
+                      "the previous stage\n", var->get_interface_type()->name);
          return;
       }
 
       if (producer_def &&
           !interstage_match(prog, producer_def, var, extra_array_level)) {
          linker_error(prog, "definitions of interface block `%s' do not "
-                      "match\n", glsl_get_type_name(var->get_interface_type()));
+                      "match\n", var->get_interface_type()->name);
          return;
       }
    }
@@ -543,7 +543,7 @@ validate_interstage_uniform_blocks(struct gl_shader_program *prog,
              */
             if (!intrastage_match(old_def, var, prog, false /* precision */)) {
                linker_error(prog, "definitions of uniform block `%s' do not "
-                            "match\n", glsl_get_type_name(var->get_interface_type()));
+                            "match\n", var->get_interface_type()->name);
                return;
             }
          }

@@ -1161,19 +1161,18 @@ virtgpu_bo_create_from_dma_buf(struct vn_renderer *renderer,
    if (virtgpu_ioctl_resource_info(gpu, gem_handle, &info))
       goto fail;
 
-   /* Upon import, blob_flags is not passed to the kernel and is only for
-    * internal use. Set it to what works best for us.
-    * - blob mem: SHAREABLE + conditional MAPPABLE per VkMemoryPropertyFlags
-    * - classic 3d: SHAREABLE only for export and to fail the map
-    */
-   uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
-   size_t mmap_size = 0;
+   uint32_t blob_flags;
+   size_t mmap_size;
    if (info.blob_mem) {
       /* must be VIRTGPU_BLOB_MEM_HOST3D or VIRTGPU_BLOB_MEM_GUEST_VRAM */
       if (info.blob_mem != gpu->bo_blob_mem)
          goto fail;
 
-      blob_flags |= virtgpu_bo_blob_flags(flags, 0);
+      /* blob_flags is not passed to the kernel and is only for internal use
+       * on imports.  Set it to what works best for us.
+       */
+      blob_flags = virtgpu_bo_blob_flags(flags, 0);
+      blob_flags |= VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
 
       /* mmap_size is only used when mappable */
       mmap_size = 0;
@@ -1183,6 +1182,13 @@ virtgpu_bo_create_from_dma_buf(struct vn_renderer *renderer,
 
          mmap_size = size;
       }
+   } else {
+      /* must be classic resource here
+       * set blob_flags to 0 to fail virtgpu_bo_map
+       * set mmap_size to 0 since mapping is not allowed
+       */
+      blob_flags = 0;
+      mmap_size = 0;
    }
 
    /* we check bo->gem_handle instead of bo->refcount because bo->refcount
@@ -1369,8 +1375,8 @@ virtgpu_init_renderer_info(struct virtgpu *gpu)
    }
 
    info->has_dma_buf_import = true;
-   /* TODO switch from emulation to drm_syncobj */
-   info->has_external_sync = true;
+   /* TODO drm_syncobj */
+   info->has_external_sync = false;
 
    info->has_implicit_fencing = false;
 

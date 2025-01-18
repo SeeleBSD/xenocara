@@ -1,7 +1,3 @@
-/*
- * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
- * SPDX-License-Identifier: MIT
- */
 #ifndef NVK_INSTANCE_H
 #define NVK_INSTANCE_H 1
 
@@ -12,7 +8,7 @@
 struct nvk_instance {
    struct vk_instance vk;
 
-   uint8_t driver_build_sha[20];
+   uint8_t driver_uuid[VK_UUID_SIZE];
 };
 
 VK_DEFINE_HANDLE_CASTS(nvk_instance, vk.base, VkInstance, VK_OBJECT_TYPE_INSTANCE)

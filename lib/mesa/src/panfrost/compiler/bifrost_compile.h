@@ -55,6 +55,7 @@ void bifrost_compile_shader_nir(nir_shader *nir,
       .lower_bitfield_insert = true,                                           \
       .lower_bitfield_extract = true,                                          \
       .lower_insert_byte = true,                                               \
+      .lower_rotate = true,                                                    \
                                                                                \
       /* Vertex ID is zero based in the traditional geometry flows, but not in \
        * the memory-allocated IDVS flow introduced and used exclusively in     \

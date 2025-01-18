@@ -303,7 +303,9 @@ void
 _mesa_update_texture_object_swizzle(struct gl_context *ctx,
                                     struct gl_texture_object *texObj)
 {
-   const struct gl_texture_image *img = _mesa_base_tex_image(texObj);
+   if (texObj->Attrib.BaseLevel >= MAX_TEXTURE_LEVELS)
+      return;
+   const struct gl_texture_image *img = texObj->Image[0][texObj->Attrib.BaseLevel];
    if (!img)
       return;
 
@@ -817,8 +819,7 @@ _mesa_test_texobj_completeness( const struct gl_context *ctx,
             return;
          }
          if (t->Image[face][baseLevel]->InternalFormat !=
-             baseImage->InternalFormat ||
-             t->Image[face][baseLevel]->TexFormat != baseImage->TexFormat) {
+             baseImage->InternalFormat) {
             incomplete(t, BASE, "Cube face format mismatch");
             return;
          }
@@ -877,8 +878,7 @@ _mesa_test_texobj_completeness( const struct gl_context *ctx,
                   incomplete(t, MIPMAP, "TexImage[%d] is missing", i);
                   return;
                }
-               if (img->InternalFormat != baseImage->InternalFormat ||
-                   img->TexFormat != baseImage->TexFormat) {
+               if (img->InternalFormat != baseImage->InternalFormat) {
                   incomplete(t, MIPMAP, "Format[i] != Format[baseLevel]");
                   return;
                }
