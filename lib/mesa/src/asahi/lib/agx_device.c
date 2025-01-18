@@ -577,32 +577,34 @@ agx_submit_single(struct agx_device *dev, enum drm_asahi_cmd_type cmd_type,
 int
 agx_import_sync_file(struct agx_device *dev, struct agx_bo *bo, int fd)
 {
-   struct dma_buf_import_sync_file import_sync_file_ioctl = {
-      .flags = DMA_BUF_SYNC_WRITE,
+   struct drm_prime_handle import_sync_file_ioctl = {
       .fd = fd,
+     .flags = 0x4,
+     .handle = bo->handle,
    };
 
    assert(fd >= 0);
-   assert(bo->prime_fd != -1);
+   // assert(bo->prime_fd != -1);
 
-   int ret = drmIoctl(bo->prime_fd, DMA_BUF_IOCTL_IMPORT_SYNC_FILE,
+   int ret = drmIoctl(bo->dev->fd, DRM_IOCTL_PRIME_FD_TO_HANDLE,
                       &import_sync_file_ioctl);
    assert(ret >= 0);
 
-   return ret;
+   return import_sync_file_ioctl.handle;
 }
 
 int
 agx_export_sync_file(struct agx_device *dev, struct agx_bo *bo)
 {
-   struct dma_buf_export_sync_file export_sync_file_ioctl = {
-      .flags = DMA_BUF_SYNC_RW,
+   struct drm_prime_handle export_sync_file_ioctl = {
+      .handle = bo->handle,
+      .flags = 0x4,
       .fd = -1,
    };
 
-   assert(bo->prime_fd != -1);
+   // assert(bo->prime_fd != -1);
 
-   int ret = drmIoctl(bo->prime_fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE,
+   int ret = drmIoctl(bo->dev->fd, DRM_IOCTL_PRIME_HANDLE_TO_FD,
                       &export_sync_file_ioctl);
    assert(ret >= 0);
    assert(export_sync_file_ioctl.fd >= 0);

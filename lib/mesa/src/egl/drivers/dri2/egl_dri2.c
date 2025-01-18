@@ -73,7 +73,7 @@
 #include "egl_dri2.h"
 #include "egldefines.h"
 
-#define NUM_ATTRIBS 12
+#define NUM_ATTRIBS 16
 
 static const struct dri2_pbuffer_visual {
    const char *format_name;
@@ -1062,9 +1062,32 @@ dri2_setup_extensions(_EGLDisplay *disp)
         dri2_dpy->present_minor_version >= 2)) &&
       (dri2_dpy->image && dri2_dpy->image->base.version >= 15);
 #endif
+   if (disp->Options.Zink && !disp->Options.ForceSoftware &&
+#ifdef HAVE_DRI3_MODIFIERS
+       dri2_dpy->dri3_major_version != -1 &&
+       !dri2_dpy->multibuffers_available &&
+#endif
+       (disp->Platform == EGL_PLATFORM_X11_KHR ||
+        disp->Platform == EGL_PLATFORM_XCB_EXT) &&
+       !debug_get_bool_option("LIBGL_KOPPER_DRI2", false))
+      return EGL_FALSE;
 
    loader_bind_extensions(dri2_dpy, optional_core_extensions,
                           ARRAY_SIZE(optional_core_extensions), extensions);
+   return EGL_TRUE;
+}
+
+EGLBoolean
+dri2_setup_device(_EGLDisplay *disp, EGLBoolean software)
+{
+   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+   _EGLDevice *dev;
+
+   dev = _eglFindDevice(dri2_dpy->fd_render_gpu, software);
+   if (!dev)
+      return EGL_FALSE;
+
+   disp->Device = dev;
    return EGL_TRUE;
 }
 
@@ -1218,6 +1241,28 @@ dri2_display_destroy(_EGLDisplay *disp)
    }
    free(dri2_dpy);
    disp->DriverData = NULL;
+}
+
+struct dri2_egl_display *
+dri2_display_create(void)
+{
+   struct dri2_egl_display *dri2_dpy = calloc(1, sizeof *dri2_dpy);
+   if (!dri2_dpy) {
+      _eglError(EGL_BAD_ALLOC, "eglInitialize");
+      return NULL;
+   }
+
+   dri2_dpy->fd_render_gpu = -1;
+   dri2_dpy->fd_display_gpu = -1;
+
+#ifdef HAVE_DRI3_MODIFIERS
+   dri2_dpy->dri3_major_version = -1;
+   dri2_dpy->dri3_minor_version = -1;
+   dri2_dpy->present_major_version = -1;
+   dri2_dpy->present_minor_version = -1;
+#endif
+
+   return dri2_dpy;
 }
 
 __DRIbuffer *

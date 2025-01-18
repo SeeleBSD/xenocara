@@ -33,10 +33,10 @@ static inline bool
 are_all_uses_fadd(nir_def *def)
 {
    nir_foreach_use_including_if(use_src, def) {
-      if (use_src->is_if)
+      if (nir_src_is_if(use_src))
          return false;
 
-      nir_instr *use_instr = use_src->parent_instr;
+      nir_instr *use_instr = nir_src_parent_instr(use_src);
       if (use_instr->type != nir_instr_type_alu)
          return false;
 
@@ -230,7 +230,7 @@ brw_nir_opt_peephole_ffma_instr(nir_builder *b,
       for (unsigned j = 0; j < add->def.num_components; j++)
          ffma->src[i].swizzle[j] = mul->src[i].swizzle[swizzle[j]];
    }
-   nir_alu_src_copy(&ffma->src[2], &add->src[1 - add_mul_src], ffma);
+   nir_alu_src_copy(&ffma->src[2], &add->src[1 - add_mul_src]);
 
    nir_def_init(&ffma->instr, &ffma->def,
                 add->def.num_components, bit_size);

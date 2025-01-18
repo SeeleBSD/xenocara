@@ -311,30 +311,20 @@ gcm_pin_instructions(nir_function_impl *impl, struct gcm_state *state)
          instr->index = state->num_instrs++;
 
          switch (instr->type) {
-         case nir_instr_type_alu:
-            switch (nir_instr_as_alu(instr)->op) {
-            case nir_op_fddx:
-            case nir_op_fddy:
-            case nir_op_fddx_fine:
-            case nir_op_fddy_fine:
-            case nir_op_fddx_coarse:
-            case nir_op_fddy_coarse:
+         case nir_instr_type_alu: {
+            nir_alu_instr *alu = nir_instr_as_alu(instr);
+
+            if (nir_op_is_derivative(alu->op)) {
                /* These can only go in uniform control flow */
                instr->pass_flags = GCM_INSTR_SCHEDULE_EARLIER_ONLY;
-               break;
-
-            case nir_op_mov:
-               if (!is_src_scalarizable(&(nir_instr_as_alu(instr)->src[0].src))) {
-                  instr->pass_flags = GCM_INSTR_PINNED;
-                  break;
-               }
-               FALLTHROUGH;
-
-            default:
+            } else if (alu->op == nir_op_mov &&
+                       !is_src_scalarizable(&alu->src[0].src)) {
+               instr->pass_flags = GCM_INSTR_PINNED;
+            } else {
                instr->pass_flags = 0;
-               break;
             }
             break;
+         }
 
          case nir_instr_type_tex: {
             nir_tex_instr *tex = nir_instr_as_tex(instr);
@@ -632,7 +622,7 @@ gcm_schedule_late_def(nir_def *def, void *void_state)
    nir_block *lca = NULL;
 
    nir_foreach_use(use_src, def) {
-      nir_instr *use_instr = use_src->parent_instr;
+      nir_instr *use_instr = nir_src_parent_instr(use_src);
 
       gcm_schedule_late_instr(use_instr, state);
 
@@ -656,7 +646,7 @@ gcm_schedule_late_def(nir_def *def, void *void_state)
    }
 
    nir_foreach_if_use(use_src, def) {
-      nir_if *if_stmt = use_src->parent_if;
+      nir_if *if_stmt = nir_src_parent_if(use_src);
 
       /* For if statements, we consider the block to be the one immediately
        * preceding the if CF node.

@@ -968,6 +968,7 @@ static void *si_create_rs_state(struct pipe_context *ctx, const struct pipe_rast
    rs->flatshade_first = state->flatshade_first;
    rs->sprite_coord_enable = state->sprite_coord_enable;
    rs->rasterizer_discard = state->rasterizer_discard;
+   rs->bottom_edge_rule = state->bottom_edge_rule;
    rs->polygon_mode_is_lines =
       (state->fill_front == PIPE_POLYGON_MODE_LINE && !(state->cull_face & PIPE_FACE_FRONT)) ||
       (state->fill_back == PIPE_POLYGON_MODE_LINE && !(state->cull_face & PIPE_FACE_BACK));
@@ -1210,6 +1211,9 @@ static void si_bind_rs_state(struct pipe_context *ctx, void *state)
    if (old_rs->sprite_coord_enable != rs->sprite_coord_enable ||
        old_rs->flatshade != rs->flatshade)
       si_mark_atom_dirty(sctx, &sctx->atoms.s.spi_map);
+
+   if (sctx->screen->dpbb_allowed && (old_rs->bottom_edge_rule != rs->bottom_edge_rule))
+      si_mark_atom_dirty(sctx, &sctx->atoms.s.dpbb_state);
 
    if (old_rs->clip_plane_enable != rs->clip_plane_enable ||
        old_rs->rasterizer_discard != rs->rasterizer_discard ||
@@ -1566,8 +1570,7 @@ static void si_emit_db_render_state(struct si_context *sctx, unsigned index)
             max_allowed_tiles_in_wave = 15;
       }
 
-      db_render_control |= S_028000_OREO_MODE(V_028000_OMODE_O_THEN_B) |
-                           S_028000_MAX_ALLOWED_TILES_IN_WAVE(max_allowed_tiles_in_wave);
+      db_render_control |= S_028000_MAX_ALLOWED_TILES_IN_WAVE(max_allowed_tiles_in_wave);
    }
 
    /* DB_COUNT_CONTROL (occlusion queries) */
@@ -3556,7 +3559,7 @@ static void si_emit_framebuffer_state(struct si_context *sctx, unsigned index)
    }
 
    /* Framebuffer dimensions. */
-   /* PA_SC_WINDOW_SCISSOR_TL is set in si_init_cs_preamble_state */
+   /* PA_SC_WINDOW_SCISSOR_TL is set to 0,0 in gfx*_init_gfx_preamble_state */
    radeon_set_context_reg(R_028208_PA_SC_WINDOW_SCISSOR_BR,
                           S_028208_BR_X(state->width) | S_028208_BR_Y(state->height));
 
@@ -5438,6 +5441,7 @@ void si_init_state_functions(struct si_context *sctx)
    sctx->atoms.s.pm4_states[SI_STATE_IDX(rasterizer)].emit = si_pm4_emit_state;
    sctx->atoms.s.pm4_states[SI_STATE_IDX(dsa)].emit = si_pm4_emit_state;
    sctx->atoms.s.pm4_states[SI_STATE_IDX(poly_offset)].emit = si_pm4_emit_state;
+   sctx->atoms.s.pm4_states[SI_STATE_IDX(sqtt_pipeline)].emit = si_pm4_emit_state;
    sctx->atoms.s.pm4_states[SI_STATE_IDX(ls)].emit = si_pm4_emit_shader;
    sctx->atoms.s.pm4_states[SI_STATE_IDX(hs)].emit = si_pm4_emit_shader;
    sctx->atoms.s.pm4_states[SI_STATE_IDX(es)].emit = si_pm4_emit_shader;
@@ -5731,7 +5735,7 @@ static void gfx6_init_gfx_preamble_state(struct si_context *sctx)
       si_pm4_set_reg(pm4, R_028408_VGT_INDX_OFFSET, 0);
    }
 
-   if (sscreen->info.gfx_level == GFX9) {
+   if (sctx->gfx_level == GFX9) {
       si_pm4_set_reg(pm4, R_00B414_SPI_SHADER_PGM_HI_LS,
                      S_00B414_MEM_BASE(sscreen->info.address32_hi >> 8));
       si_pm4_set_reg(pm4, R_00B214_SPI_SHADER_PGM_HI_ES,
@@ -6064,6 +6068,11 @@ static void gfx10_init_gfx_preamble_state(struct si_context *sctx)
    si_pm4_set_reg(pm4, R_028C48_PA_SC_BINNER_CNTL_1,
                   S_028C48_MAX_ALLOC_COUNT(sscreen->info.pbb_max_alloc_count - 1) |
                   S_028C48_MAX_PRIM_PER_BATCH(1023));
+
+   if (sctx->gfx_level >= GFX11_5)
+      si_pm4_set_reg(pm4, R_028C54_PA_SC_BINNER_CNTL_2,
+                     S_028C54_ENABLE_PING_PONG_BIN_ORDER(1));
+
    /* Break up a pixel wave if it contains deallocs for more than
     * half the parameter cache.
     *

@@ -226,7 +226,9 @@ get_buffer_resource(struct pipe_context *ctx, void *mem)
 }
 
 ALWAYS_INLINE static void
-assert_subresource_layers(const struct pipe_resource *pres, const VkImageSubresourceLayers *layers, const VkOffset3D *offsets)
+assert_subresource_layers(const struct pipe_resource *pres,
+                          const struct lvp_image *image,
+                          const VkImageSubresourceLayers *layers, const VkOffset3D *offsets)
 {
 #ifndef NDEBUG
    if (pres->target == PIPE_TEXTURE_3D) {
@@ -236,7 +238,7 @@ assert_subresource_layers(const struct pipe_resource *pres, const VkImageSubreso
       assert(offsets[1].z <= pres->depth0);
    } else {
       assert(layers->baseArrayLayer < pres->array_size);
-      assert(layers->baseArrayLayer + layers->layerCount <= pres->array_size);
+      assert(layers->baseArrayLayer + vk_image_subresource_layer_count(&image->vk, layers) <= pres->array_size);
       assert(offsets[0].z == 0);
       assert(offsets[1].z == 1);
    }
@@ -493,9 +495,13 @@ static void emit_state(struct rendering_state *state)
       state->stencil_ref_dirty = false;
    }
 
+   if (state->ve_dirty)
+      update_vertex_elements_buffer_index(state);
+
    if (state->vb_strides_dirty) {
       for (unsigned i = 0; i < state->velem.count; i++)
          state->velem.velems[i].src_stride = state->vb_strides[state->velem.velems[i].vertex_buffer_index];
+      state->ve_dirty = true;
       state->vb_strides_dirty = false;
    }
 
@@ -505,7 +511,6 @@ static void emit_state(struct rendering_state *state)
    }
 
    if (state->ve_dirty) {
-      update_vertex_elements_buffer_index(state);
       cso_set_vertex_elements(state->cso, &state->velem);
       state->ve_dirty = false;
    }
@@ -870,8 +875,6 @@ static void handle_graphics_pipeline(struct lvp_pipeline *pipeline,
       state->dsa_dirty = true;
    }
 
-   state->blend_state.independent_blend_enable = ps->rp->color_attachment_count > 1;
-
    if (ps->cb) {
       if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_CB_LOGIC_OP_ENABLE))
          state->blend_state.logicop_enable = ps->cb->logic_op_enable;
@@ -969,16 +972,6 @@ static void handle_graphics_pipeline(struct lvp_pipeline *pipeline,
       state->rs_dirty = true;
    }
 
-   if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_VI_BINDING_STRIDES)) {
-      if (ps->vi) {
-         u_foreach_bit(a, ps->vi->attributes_valid) {
-            uint32_t b = ps->vi->attributes[a].binding;
-            state->velem.velems[a].src_stride = ps->vi->bindings[b].stride;
-         }
-         state->vb_dirty = true;
-      }
-   }
-
    if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_VI) && ps->vi) {
       u_foreach_bit(a, ps->vi->attributes_valid) {
          uint32_t b = ps->vi->attributes[a].binding;
@@ -998,6 +991,12 @@ static void handle_graphics_pipeline(struct lvp_pipeline *pipeline,
             break;
          default:
             unreachable("Invalid vertex input rate");
+         }
+
+         if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_VI_BINDING_STRIDES)) {
+            state->vb_strides[b] = ps->vi->bindings[b].stride;
+            state->vb_strides_dirty = true;
+            state->ve_dirty = true;
          }
       }
 
@@ -1287,7 +1286,7 @@ static struct pipe_surface *create_img_surface(struct rendering_state *state,
    VkImageSubresourceRange imgv_subres =
       vk_image_view_subresource_range(&imgv->vk);
 
-   return create_img_surface_bo(state, &imgv_subres, imgv->image->bo,
+   return create_img_surface_bo(state, &imgv_subres, imgv->image->planes[0].bo,
                                 lvp_vk_format_to_pipe_format(format),
                                 width, height, base_layer, layer_count, 0);
 }
@@ -1531,8 +1530,8 @@ resolve_ds(struct rendering_state *state, bool multi)
 
       struct pipe_blit_info info = {0};
 
-      info.src.resource = src_imgv->image->bo;
-      info.dst.resource = dst_imgv->image->bo;
+      info.src.resource = src_imgv->image->planes[0].bo;
+      info.dst.resource = dst_imgv->image->planes[0].bo;
       info.src.format = src_imgv->pformat;
       info.dst.format = dst_imgv->pformat;
       info.filter = PIPE_TEX_FILTER_NEAREST;
@@ -1579,8 +1578,8 @@ resolve_color(struct rendering_state *state, bool multi)
 
       struct pipe_blit_info info = { 0 };
 
-      info.src.resource = src_imgv->image->bo;
-      info.dst.resource = dst_imgv->image->bo;
+      info.src.resource = src_imgv->image->planes[0].bo;
+      info.dst.resource = dst_imgv->image->planes[0].bo;
       info.src.format = src_imgv->pformat;
       info.dst.format = dst_imgv->pformat;
       info.filter = PIPE_TEX_FILTER_NEAREST;
@@ -1630,12 +1629,12 @@ replicate_attachment(struct rendering_state *state,
       .x = 0,
       .y = 0,
       .z = 0,
-      .width = u_minify(dst->image->bo->width0, level),
-      .height = u_minify(dst->image->bo->height0, level),
-      .depth = u_minify(dst->image->bo->depth0, level),
+      .width = u_minify(dst->image->planes[0].bo->width0, level),
+      .height = u_minify(dst->image->planes[0].bo->height0, level),
+      .depth = u_minify(dst->image->planes[0].bo->depth0, level),
    };
-   state->pctx->resource_copy_region(state->pctx, dst->image->bo, level,
-                                     0, 0, 0, src->image->bo, level, &box);
+   state->pctx->resource_copy_region(state->pctx, dst->image->planes[0].bo, level,
+                                     0, 0, 0, src->image->planes[0].bo, level, &box);
 }
 
 static struct lvp_image_view *
@@ -1647,13 +1646,13 @@ create_multisample_surface(struct rendering_state *state, struct lvp_image_view 
    templ.nr_samples = samples;
    struct lvp_image *image = mem_dup(imgv->image, sizeof(struct lvp_image));
    image->vk.samples = samples;
-   image->pmem = NULL;
-   image->bo = state->pctx->screen->resource_create(state->pctx->screen, &templ);
+   image->planes[0].pmem = NULL;
+   image->planes[0].bo = state->pctx->screen->resource_create(state->pctx->screen, &templ);
 
    struct lvp_image_view *multi = mem_dup(imgv, sizeof(struct lvp_image_view));
    multi->image = image;
-   multi->surface = state->pctx->create_surface(state->pctx, image->bo, imgv->surface);
-   struct pipe_resource *ref = image->bo;
+   multi->surface = state->pctx->create_surface(state->pctx, image->planes[0].bo, imgv->surface);
+   struct pipe_resource *ref = image->planes[0].bo;
    pipe_resource_reference(&ref, NULL);
    imgv->multisample = multi;
    multi->multisample = imgv;
@@ -2173,32 +2172,35 @@ subresource_layercount(const struct lvp_image *image, const VkImageSubresourceLa
 static void handle_copy_image_to_buffer2(struct vk_cmd_queue_entry *cmd,
                                              struct rendering_state *state)
 {
-   struct VkCopyImageToBufferInfo2 *copycmd = cmd->u.copy_image_to_buffer2.copy_image_to_buffer_info;
+   const struct VkCopyImageToBufferInfo2 *copycmd = cmd->u.copy_image_to_buffer2.copy_image_to_buffer_info;
    LVP_FROM_HANDLE(lvp_image, src_image, copycmd->srcImage);
    struct pipe_box box, dbox;
    struct pipe_transfer *src_t, *dst_t;
    uint8_t *src_data, *dst_data;
 
    for (uint32_t i = 0; i < copycmd->regionCount; i++) {
+      const VkBufferImageCopy2 *region = &copycmd->pRegions[i];
+      const VkImageAspectFlagBits aspects = copycmd->pRegions[i].imageSubresource.aspectMask;
+      uint8_t plane = lvp_image_aspects_to_plane(src_image, aspects);
 
-      box.x = copycmd->pRegions[i].imageOffset.x;
-      box.y = copycmd->pRegions[i].imageOffset.y;
-      box.z = src_image->vk.image_type == VK_IMAGE_TYPE_3D ? copycmd->pRegions[i].imageOffset.z : copycmd->pRegions[i].imageSubresource.baseArrayLayer;
-      box.width = copycmd->pRegions[i].imageExtent.width;
-      box.height = copycmd->pRegions[i].imageExtent.height;
-      box.depth = src_image->vk.image_type == VK_IMAGE_TYPE_3D ? copycmd->pRegions[i].imageExtent.depth : subresource_layercount(src_image, &copycmd->pRegions[i].imageSubresource);
+      box.x = region->imageOffset.x;
+      box.y = region->imageOffset.y;
+      box.z = src_image->vk.image_type == VK_IMAGE_TYPE_3D ? region->imageOffset.z : region->imageSubresource.baseArrayLayer;
+      box.width = region->imageExtent.width;
+      box.height = region->imageExtent.height;
+      box.depth = src_image->vk.image_type == VK_IMAGE_TYPE_3D ? region->imageExtent.depth : subresource_layercount(src_image, &region->imageSubresource);
 
       src_data = state->pctx->texture_map(state->pctx,
-                                           src_image->bo,
-                                           copycmd->pRegions[i].imageSubresource.mipLevel,
+                                           src_image->planes[plane].bo,
+                                           region->imageSubresource.mipLevel,
                                            PIPE_MAP_READ,
                                            &box,
                                            &src_t);
 
-      dbox.x = copycmd->pRegions[i].bufferOffset;
+      dbox.x = region->bufferOffset;
       dbox.y = 0;
       dbox.z = 0;
-      dbox.width = lvp_buffer_from_handle(copycmd->dstBuffer)->bo->width0 - copycmd->pRegions[i].bufferOffset;
+      dbox.width = lvp_buffer_from_handle(copycmd->dstBuffer)->bo->width0 - region->bufferOffset;
       dbox.height = 1;
       dbox.depth = 1;
       dst_data = state->pctx->buffer_map(state->pctx,
@@ -2208,12 +2210,12 @@ static void handle_copy_image_to_buffer2(struct vk_cmd_queue_entry *cmd,
                                            &dbox,
                                            &dst_t);
 
-      enum pipe_format src_format = src_image->bo->format;
+      enum pipe_format src_format = src_image->planes[plane].bo->format;
       enum pipe_format dst_format = src_format;
       if (util_format_is_depth_or_stencil(src_format)) {
-         if (copycmd->pRegions[i].imageSubresource.aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT) {
+         if (region->imageSubresource.aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT) {
             dst_format = util_format_get_depth_only(src_format);
-         } else if (copycmd->pRegions[i].imageSubresource.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT) {
+         } else if (region->imageSubresource.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT) {
             dst_format = PIPE_FORMAT_S8_UINT;
          }
       }
@@ -2225,8 +2227,8 @@ static void handle_copy_image_to_buffer2(struct vk_cmd_queue_entry *cmd,
                         buffer_layout.row_stride_B,
                         buffer_layout.image_stride_B,
                         0, 0, 0,
-                        copycmd->pRegions[i].imageExtent.width,
-                        copycmd->pRegions[i].imageExtent.height,
+                        region->imageExtent.width,
+                        region->imageExtent.height,
                         box.depth,
                         src_data, src_format, src_t->stride, src_t->layer_stride, 0, 0, 0);
       } else {
@@ -2234,8 +2236,8 @@ static void handle_copy_image_to_buffer2(struct vk_cmd_queue_entry *cmd,
                        buffer_layout.row_stride_B,
                        buffer_layout.image_stride_B,
                        0, 0, 0,
-                       copycmd->pRegions[i].imageExtent.width,
-                       copycmd->pRegions[i].imageExtent.height,
+                       region->imageExtent.width,
+                       region->imageExtent.height,
                        box.depth,
                        src_data, src_t->stride, src_t->layer_stride, 0, 0, 0);
       }
@@ -2247,15 +2249,18 @@ static void handle_copy_image_to_buffer2(struct vk_cmd_queue_entry *cmd,
 static void handle_copy_buffer_to_image(struct vk_cmd_queue_entry *cmd,
                                         struct rendering_state *state)
 {
-   struct VkCopyBufferToImageInfo2 *copycmd = cmd->u.copy_buffer_to_image2.copy_buffer_to_image_info;
+   const struct VkCopyBufferToImageInfo2 *copycmd = cmd->u.copy_buffer_to_image2.copy_buffer_to_image_info;
    LVP_FROM_HANDLE(lvp_image, dst_image, copycmd->dstImage);
 
    for (uint32_t i = 0; i < copycmd->regionCount; i++) {
+      const VkBufferImageCopy2 *region = &copycmd->pRegions[i];
       struct pipe_box box, sbox;
       struct pipe_transfer *src_t, *dst_t;
       void *src_data, *dst_data;
+      const VkImageAspectFlagBits aspects = copycmd->pRegions[i].imageSubresource.aspectMask;
+      uint8_t plane = lvp_image_aspects_to_plane(dst_image, aspects);
 
-      sbox.x = copycmd->pRegions[i].bufferOffset;
+      sbox.x = region->bufferOffset;
       sbox.y = 0;
       sbox.z = 0;
       sbox.width = lvp_buffer_from_handle(copycmd->srcBuffer)->bo->width0;
@@ -2269,26 +2274,26 @@ static void handle_copy_buffer_to_image(struct vk_cmd_queue_entry *cmd,
                                            &src_t);
 
 
-      box.x = copycmd->pRegions[i].imageOffset.x;
-      box.y = copycmd->pRegions[i].imageOffset.y;
-      box.z = dst_image->vk.image_type == VK_IMAGE_TYPE_3D ? copycmd->pRegions[i].imageOffset.z : copycmd->pRegions[i].imageSubresource.baseArrayLayer;
-      box.width = copycmd->pRegions[i].imageExtent.width;
-      box.height = copycmd->pRegions[i].imageExtent.height;
-      box.depth = dst_image->vk.image_type == VK_IMAGE_TYPE_3D ? copycmd->pRegions[i].imageExtent.depth : subresource_layercount(dst_image, &copycmd->pRegions[i].imageSubresource);
+      box.x = region->imageOffset.x;
+      box.y = region->imageOffset.y;
+      box.z = dst_image->vk.image_type == VK_IMAGE_TYPE_3D ? region->imageOffset.z : region->imageSubresource.baseArrayLayer;
+      box.width = region->imageExtent.width;
+      box.height = region->imageExtent.height;
+      box.depth = dst_image->vk.image_type == VK_IMAGE_TYPE_3D ? region->imageExtent.depth : subresource_layercount(dst_image, &region->imageSubresource);
 
       dst_data = state->pctx->texture_map(state->pctx,
-                                           dst_image->bo,
-                                           copycmd->pRegions[i].imageSubresource.mipLevel,
+                                           dst_image->planes[plane].bo,
+                                           region->imageSubresource.mipLevel,
                                            PIPE_MAP_WRITE,
                                            &box,
                                            &dst_t);
 
-      enum pipe_format dst_format = dst_image->bo->format;
+      enum pipe_format dst_format = dst_image->planes[plane].bo->format;
       enum pipe_format src_format = dst_format;
       if (util_format_is_depth_or_stencil(dst_format)) {
-         if (copycmd->pRegions[i].imageSubresource.aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT) {
-            src_format = util_format_get_depth_only(dst_image->bo->format);
-         } else if (copycmd->pRegions[i].imageSubresource.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT) {
+         if (region->imageSubresource.aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT) {
+            src_format = util_format_get_depth_only(dst_image->planes[plane].bo->format);
+         } else if (region->imageSubresource.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT) {
             src_format = PIPE_FORMAT_S8_UINT;
          }
       }
@@ -2299,8 +2304,8 @@ static void handle_copy_buffer_to_image(struct vk_cmd_queue_entry *cmd,
          copy_depth_box(dst_data, dst_format,
                         dst_t->stride, dst_t->layer_stride,
                         0, 0, 0,
-                        copycmd->pRegions[i].imageExtent.width,
-                        copycmd->pRegions[i].imageExtent.height,
+                        region->imageExtent.width,
+                        region->imageExtent.height,
                         box.depth,
                         src_data, src_format,
                         buffer_layout.row_stride_B,
@@ -2310,8 +2315,8 @@ static void handle_copy_buffer_to_image(struct vk_cmd_queue_entry *cmd,
          util_copy_box(dst_data, dst_format,
                        dst_t->stride, dst_t->layer_stride,
                        0, 0, 0,
-                       copycmd->pRegions[i].imageExtent.width,
-                       copycmd->pRegions[i].imageExtent.height,
+                       region->imageExtent.width,
+                       region->imageExtent.height,
                        box.depth,
                        src_data,
                        buffer_layout.row_stride_B,
@@ -2326,34 +2331,41 @@ static void handle_copy_buffer_to_image(struct vk_cmd_queue_entry *cmd,
 static void handle_copy_image(struct vk_cmd_queue_entry *cmd,
                               struct rendering_state *state)
 {
-   struct VkCopyImageInfo2 *copycmd = cmd->u.copy_image2.copy_image_info;
+   const struct VkCopyImageInfo2 *copycmd = cmd->u.copy_image2.copy_image_info;
    LVP_FROM_HANDLE(lvp_image, src_image, copycmd->srcImage);
    LVP_FROM_HANDLE(lvp_image, dst_image, copycmd->dstImage);
 
    for (uint32_t i = 0; i < copycmd->regionCount; i++) {
+      const VkImageCopy2 *region = &copycmd->pRegions[i];
+      const VkImageAspectFlagBits src_aspects =
+         copycmd->pRegions[i].srcSubresource.aspectMask;
+      uint8_t src_plane = lvp_image_aspects_to_plane(src_image, src_aspects);
+      const VkImageAspectFlagBits dst_aspects =
+         copycmd->pRegions[i].dstSubresource.aspectMask;
+      uint8_t dst_plane = lvp_image_aspects_to_plane(dst_image, dst_aspects);
       struct pipe_box src_box;
-      src_box.x = copycmd->pRegions[i].srcOffset.x;
-      src_box.y = copycmd->pRegions[i].srcOffset.y;
-      src_box.width = copycmd->pRegions[i].extent.width;
-      src_box.height = copycmd->pRegions[i].extent.height;
-      if (src_image->bo->target == PIPE_TEXTURE_3D) {
-         src_box.depth = copycmd->pRegions[i].extent.depth;
-         src_box.z = copycmd->pRegions[i].srcOffset.z;
+      src_box.x = region->srcOffset.x;
+      src_box.y = region->srcOffset.y;
+      src_box.width = region->extent.width;
+      src_box.height = region->extent.height;
+      if (src_image->planes[src_plane].bo->target == PIPE_TEXTURE_3D) {
+         src_box.depth = region->extent.depth;
+         src_box.z = region->srcOffset.z;
       } else {
-         src_box.depth = subresource_layercount(src_image, &copycmd->pRegions[i].srcSubresource);
-         src_box.z = copycmd->pRegions[i].srcSubresource.baseArrayLayer;
+         src_box.depth = subresource_layercount(src_image, &region->srcSubresource);
+         src_box.z = region->srcSubresource.baseArrayLayer;
       }
 
-      unsigned dstz = dst_image->bo->target == PIPE_TEXTURE_3D ?
-                      copycmd->pRegions[i].dstOffset.z :
-                      copycmd->pRegions[i].dstSubresource.baseArrayLayer;
-      state->pctx->resource_copy_region(state->pctx, dst_image->bo,
-                                        copycmd->pRegions[i].dstSubresource.mipLevel,
-                                        copycmd->pRegions[i].dstOffset.x,
-                                        copycmd->pRegions[i].dstOffset.y,
+      unsigned dstz = dst_image->planes[dst_plane].bo->target == PIPE_TEXTURE_3D ?
+                      region->dstOffset.z :
+                      region->dstSubresource.baseArrayLayer;
+      state->pctx->resource_copy_region(state->pctx, dst_image->planes[dst_plane].bo,
+                                        region->dstSubresource.mipLevel,
+                                        region->dstOffset.x,
+                                        region->dstOffset.y,
                                         dstz,
-                                        src_image->bo,
-                                        copycmd->pRegions[i].srcSubresource.mipLevel,
+                                        src_image->planes[src_plane].bo,
+                                        region->srcSubresource.mipLevel,
                                         &src_box);
    }
 }
@@ -2361,13 +2373,14 @@ static void handle_copy_image(struct vk_cmd_queue_entry *cmd,
 static void handle_copy_buffer(struct vk_cmd_queue_entry *cmd,
                                struct rendering_state *state)
 {
-   VkCopyBufferInfo2 *copycmd = cmd->u.copy_buffer2.copy_buffer_info;
+   const VkCopyBufferInfo2 *copycmd = cmd->u.copy_buffer2.copy_buffer_info;
 
    for (uint32_t i = 0; i < copycmd->regionCount; i++) {
+      const VkBufferCopy2 *region = &copycmd->pRegions[i];
       struct pipe_box box = { 0 };
-      u_box_1d(copycmd->pRegions[i].srcOffset, copycmd->pRegions[i].size, &box);
+      u_box_1d(region->srcOffset, region->size, &box);
       state->pctx->resource_copy_region(state->pctx, lvp_buffer_from_handle(copycmd->dstBuffer)->bo, 0,
-                                        copycmd->pRegions[i].dstOffset, 0, 0,
+                                        region->dstOffset, 0, 0,
                                         lvp_buffer_from_handle(copycmd->srcBuffer)->bo, 0, &box);
    }
 }
@@ -2380,10 +2393,10 @@ static void handle_blit_image(struct vk_cmd_queue_entry *cmd,
    LVP_FROM_HANDLE(lvp_image, dst_image, blitcmd->dstImage);
 
    struct pipe_blit_info info = {
-      .src.resource = src_image->bo,
-      .dst.resource = dst_image->bo,
-      .src.format = src_image->bo->format,
-      .dst.format = dst_image->bo->format,
+      .src.resource = src_image->planes[0].bo,
+      .dst.resource = dst_image->planes[0].bo,
+      .src.format = src_image->planes[0].bo->format,
+      .dst.format = dst_image->planes[0].bo->format,
       .mask = util_format_is_depth_or_stencil(info.src.format) ? PIPE_MASK_ZS : PIPE_MASK_RGBA,
       .filter = blitcmd->filter == VK_FILTER_NEAREST ? PIPE_TEX_FILTER_NEAREST : PIPE_TEX_FILTER_LINEAR,
    };
@@ -2430,9 +2443,9 @@ static void handle_blit_image(struct vk_cmd_queue_entry *cmd,
          info.src.box.height = srcY0 - srcY1;
       }
 
-      assert_subresource_layers(info.src.resource, &blitcmd->pRegions[i].srcSubresource, blitcmd->pRegions[i].srcOffsets);
-      assert_subresource_layers(info.dst.resource, &blitcmd->pRegions[i].dstSubresource, blitcmd->pRegions[i].dstOffsets);
-      if (src_image->bo->target == PIPE_TEXTURE_3D) {
+      assert_subresource_layers(info.src.resource, src_image, &blitcmd->pRegions[i].srcSubresource, blitcmd->pRegions[i].srcOffsets);
+      assert_subresource_layers(info.dst.resource, dst_image, &blitcmd->pRegions[i].dstSubresource, blitcmd->pRegions[i].dstOffsets);
+      if (src_image->planes[0].bo->target == PIPE_TEXTURE_3D) {
          if (dstZ0 < dstZ1) {
             info.dst.box.z = dstZ0;
             info.src.box.z = srcZ0;
@@ -2928,7 +2941,7 @@ static void handle_clear_color_image(struct vk_cmd_queue_entry *cmd,
    LVP_FROM_HANDLE(lvp_image, image, cmd->u.clear_color_image.image);
    union util_color uc;
    uint32_t *col_val = uc.ui;
-   util_pack_color_union(image->bo->format, &uc, (void*)cmd->u.clear_color_image.color);
+   util_pack_color_union(image->planes[0].bo->format, &uc, (void*)cmd->u.clear_color_image.color);
    for (unsigned i = 0; i < cmd->u.clear_color_image.range_count; i++) {
       VkImageSubresourceRange *range = &cmd->u.clear_color_image.ranges[i];
       struct pipe_box box;
@@ -2938,12 +2951,12 @@ static void handle_clear_color_image(struct vk_cmd_queue_entry *cmd,
 
       uint32_t level_count = vk_image_subresource_level_count(&image->vk, range);
       for (unsigned j = range->baseMipLevel; j < range->baseMipLevel + level_count; j++) {
-         box.width = u_minify(image->bo->width0, j);
-         box.height = u_minify(image->bo->height0, j);
+         box.width = u_minify(image->planes[0].bo->width0, j);
+         box.height = u_minify(image->planes[0].bo->height0, j);
          box.depth = 1;
-         if (image->bo->target == PIPE_TEXTURE_3D) {
-            box.depth = u_minify(image->bo->depth0, j);
-         } else if (image->bo->target == PIPE_TEXTURE_1D_ARRAY) {
+         if (image->planes[0].bo->target == PIPE_TEXTURE_3D) {
+            box.depth = u_minify(image->planes[0].bo->depth0, j);
+         } else if (image->planes[0].bo->target == PIPE_TEXTURE_1D_ARRAY) {
             box.y = range->baseArrayLayer;
             box.height = vk_image_subresource_layer_count(&image->vk, range);
             box.depth = 1;
@@ -2952,7 +2965,7 @@ static void handle_clear_color_image(struct vk_cmd_queue_entry *cmd,
             box.depth = vk_image_subresource_layer_count(&image->vk, range);
          }
 
-         state->pctx->clear_texture(state->pctx, image->bo,
+         state->pctx->clear_texture(state->pctx, image->planes[0].bo,
                                     j, &box, (void *)col_val);
       }
    }
@@ -2974,17 +2987,17 @@ static void handle_clear_ds_image(struct vk_cmd_queue_entry *cmd,
       for (unsigned j = 0; j < level_count; j++) {
          struct pipe_surface *surf;
          unsigned width, height, depth;
-         width = u_minify(image->bo->width0, range->baseMipLevel + j);
-         height = u_minify(image->bo->height0, range->baseMipLevel + j);
+         width = u_minify(image->planes[0].bo->width0, range->baseMipLevel + j);
+         height = u_minify(image->planes[0].bo->height0, range->baseMipLevel + j);
 
-         if (image->bo->target == PIPE_TEXTURE_3D) {
-            depth = u_minify(image->bo->depth0, range->baseMipLevel + j);
+         if (image->planes[0].bo->target == PIPE_TEXTURE_3D) {
+            depth = u_minify(image->planes[0].bo->depth0, range->baseMipLevel + j);
          } else {
             depth = vk_image_subresource_layer_count(&image->vk, range);
          }
 
          surf = create_img_surface_bo(state, range,
-                                      image->bo, image->bo->format,
+                                      image->planes[0].bo, image->planes[0].bo->format,
                                       width, height,
                                       0, depth, j);
 
@@ -3063,10 +3076,10 @@ static void handle_resolve_image(struct vk_cmd_queue_entry *cmd,
    LVP_FROM_HANDLE(lvp_image, dst_image, resolvecmd->dstImage);
 
    struct pipe_blit_info info = {0};
-   info.src.resource = src_image->bo;
-   info.dst.resource = dst_image->bo;
-   info.src.format = src_image->bo->format;
-   info.dst.format = dst_image->bo->format;
+   info.src.resource = src_image->planes[0].bo;
+   info.dst.resource = dst_image->planes[0].bo;
+   info.src.format = src_image->planes[0].bo->format;
+   info.dst.format = dst_image->planes[0].bo->format;
    info.mask = util_format_is_depth_or_stencil(info.src.format) ? PIPE_MASK_ZS : PIPE_MASK_RGBA;
    info.filter = PIPE_TEX_FILTER_NEAREST;
 
@@ -3341,6 +3354,7 @@ static void handle_set_vertex_input(struct vk_cmd_queue_entry *cmd,
          max_location = location;
    }
    state->velem.count = max_location + 1;
+   state->vb_strides_dirty = false;
    state->vb_dirty = true;
    state->ve_dirty = true;
 }
@@ -3707,7 +3721,6 @@ handle_shaders(struct vk_cmd_queue_entry *cmd, struct rendering_state *state)
    }
 
    if (gfx) {
-      state->blend_state.independent_blend_enable = true;
       state->push_size[0] = 0;
       for (unsigned i = 0; i < ARRAY_SIZE(state->gfx_push_sizes); i++)
          state->push_size[0] += state->gfx_push_sizes[i];
@@ -3787,7 +3800,7 @@ process_sequence(struct rendering_state *state,
       struct vk_cmd_queue_entry *cmd = (struct vk_cmd_queue_entry*)(pbuf + size);
       size_t cmd_size = vk_cmd_queue_type_sizes[lvp_nv_dgc_token_to_cmd_type(token)];
       uint8_t *cmdptr = (void*)(pbuf + size + cmd_size);
- 
+
       if (max_size < size + cmd_size)
          abort();
       cmd->type = lvp_nv_dgc_token_to_cmd_type(token);
@@ -3845,7 +3858,7 @@ process_sequence(struct rendering_state *state,
       }
       case VK_INDIRECT_COMMANDS_TOKEN_TYPE_VERTEX_BUFFER_NV: {
          VkBindVertexBufferIndirectCommandNV *data = input;
-         cmd_size += sizeof(*cmd->u.bind_vertex_buffers.buffers) + sizeof(*cmd->u.bind_vertex_buffers.offsets);
+         cmd_size += sizeof(*cmd->u.bind_vertex_buffers2.buffers) + sizeof(*cmd->u.bind_vertex_buffers2.offsets);
          cmd_size += sizeof(*cmd->u.bind_vertex_buffers2.sizes) + sizeof(*cmd->u.bind_vertex_buffers2.strides);
          if (max_size < size + cmd_size)
             abort();
@@ -3854,12 +3867,20 @@ process_sequence(struct rendering_state *state,
          cmd->u.bind_vertex_buffers2.binding_count = 1;
 
          cmd->u.bind_vertex_buffers2.buffers = (void*)cmdptr;
-         cmd->u.bind_vertex_buffers2.offsets = (void*)(cmdptr + sizeof(*cmd->u.bind_vertex_buffers2.buffers));
+         uint32_t alloc_offset = sizeof(*cmd->u.bind_vertex_buffers2.buffers);
+
+         cmd->u.bind_vertex_buffers2.offsets = (void*)(cmdptr + alloc_offset);
+         alloc_offset += sizeof(*cmd->u.bind_vertex_buffers2.offsets);
+
+         cmd->u.bind_vertex_buffers2.sizes = (void*)(cmdptr + alloc_offset);
+         alloc_offset += sizeof(*cmd->u.bind_vertex_buffers2.sizes);
+
          cmd->u.bind_vertex_buffers2.offsets[0] = 0;
          cmd->u.bind_vertex_buffers2.buffers[0] = data->bufferAddress ? get_buffer(state, (void*)(uintptr_t)data->bufferAddress, (size_t*)&cmd->u.bind_vertex_buffers2.offsets[0]) : VK_NULL_HANDLE;
+         cmd->u.bind_vertex_buffers2.sizes[0] = data->size;
 
          if (token->vertexDynamicStride) {
-            cmd->u.bind_vertex_buffers2.strides = (void*)(cmdptr + sizeof(*cmd->u.bind_vertex_buffers2.buffers) + sizeof(*cmd->u.bind_vertex_buffers2.offsets) + sizeof(*cmd->u.bind_vertex_buffers2.sizes));
+            cmd->u.bind_vertex_buffers2.strides = (void*)(cmdptr + alloc_offset);
             cmd->u.bind_vertex_buffers2.strides[0] = data->stride;
          } else {
             cmd->u.bind_vertex_buffers2.strides = NULL;
@@ -4393,7 +4414,6 @@ static void lvp_execute_cmd_buffer(struct list_head *cmds,
                                    struct rendering_state *state, bool print_cmds)
 {
    struct vk_cmd_queue_entry *cmd;
-   bool first = true;
    bool did_flush = false;
 
    LIST_FOR_EACH_ENTRY(cmd, cmds, cmd_link) {
@@ -4518,10 +4538,8 @@ static void lvp_execute_cmd_buffer(struct list_head *cmds,
          handle_resolve_image(cmd, state);
          break;
       case VK_CMD_PIPELINE_BARRIER2:
-         /* skip flushes since every cmdbuf does a flush
-            after iterating its cmds and so this is redundant
-          */
-         if (first || did_flush || cmd->cmd_link.next == cmds)
+         /* flushes are actually stalls, so multiple flushes are redundant */
+         if (did_flush)
             continue;
          handle_pipeline_barrier(cmd, state);
          did_flush = true;
@@ -4754,7 +4772,6 @@ static void lvp_execute_cmd_buffer(struct list_head *cmds,
          unreachable("Unsupported command");
          break;
       }
-      first = false;
       did_flush = false;
       if (!cmd->cmd_link.next)
          break;
@@ -4784,6 +4801,9 @@ VkResult lvp_execute_cmds(struct lvp_device *device,
    util_dynarray_init(&state->push_desc_sets, NULL);
 
    /* default values */
+   state->min_sample_shading = 1;
+   state->num_viewports = 1;
+   state->num_scissors = 1;
    state->rs_state.line_width = 1.0;
    state->rs_state.flatshade_first = true;
    state->rs_state.clip_halfz = true;
@@ -4793,6 +4813,7 @@ VkResult lvp_execute_cmds(struct lvp_device *device,
    state->rs_state.half_pixel_center = true;
    state->rs_state.scissor = true;
    state->rs_state.no_ms_sample_mask_out = true;
+   state->blend_state.independent_blend_enable = true;
 
    /* create a gallium context */
    lvp_execute_cmd_buffer(&cmd_buffer->vk.cmd_queue.cmds, state, device->print_cmds);

@@ -47,6 +47,18 @@ static bool si_sqtt_init_bo(struct si_context *sctx) {
   return true;
 }
 
+static bool
+si_sqtt_se_is_disabled(const struct radeon_info *info, unsigned se)
+{
+   /* FIXME: SQTT only works on SE0 for some unknown reasons. See RADV for the
+    * solution */
+   if (info->gfx_level == GFX11)
+      return se != 0;
+
+   /* No active CU on the SE means it is disabled. */
+   return info->cu_mask[se][0] == 0;
+}
+
 static void si_emit_sqtt_start(struct si_context *sctx,
                                struct radeon_cmdbuf *cs,
                                uint32_t queue_family_index) {
@@ -62,7 +74,7 @@ static void si_emit_sqtt_start(struct si_context *sctx,
         ac_sqtt_get_data_va(&sctx->screen->info, sctx->sqtt, va, se);
     uint64_t shifted_va = data_va >> SQTT_BUFFER_ALIGN_SHIFT;
 
-    if (ac_sqtt_se_is_disabled(&sctx->screen->info, se))
+    if (si_sqtt_se_is_disabled(&sctx->screen->info, se))
       continue;
 
     /* Target SEx and SH0. */
@@ -333,7 +345,7 @@ static void si_emit_sqtt_stop(struct si_context *sctx, struct radeon_cmdbuf *cs,
   }
 
   for (unsigned se = 0; se < max_se; se++) {
-    if (ac_sqtt_se_is_disabled(&sctx->screen->info, se))
+    if (si_sqtt_se_is_disabled(&sctx->screen->info, se))
       continue;
 
     radeon_begin(cs);
@@ -565,7 +577,7 @@ static bool si_get_sqtt_trace(struct si_context *sctx,
       void *info_ptr = sqtt_ptr + info_offset;
       struct ac_sqtt_data_info *info = (struct ac_sqtt_data_info *)info_ptr;
 
-      if (ac_sqtt_se_is_disabled(&sctx->screen->info, se))
+      if (si_sqtt_se_is_disabled(&sctx->screen->info, se))
         continue;
 
       if (!ac_is_sqtt_complete(&sctx->screen->info, sctx->sqtt, info)) {
@@ -665,12 +677,14 @@ void si_destroy_sqtt(struct si_context *sctx) {
   list_for_each_entry_safe(struct rgp_pso_correlation_record, record,
                            &pso_correlation->record, list) {
     list_del(&record->list);
+    pso_correlation->record_count--;
     free(record);
   }
 
   list_for_each_entry_safe(struct rgp_loader_events_record, record,
                            &loader_events->record, list) {
     list_del(&record->list);
+    loader_events->record_count--;
     free(record);
   }
 
@@ -686,6 +700,7 @@ void si_destroy_sqtt(struct si_context *sctx) {
     }
     list_del(&record->list);
     free(record);
+    code_object->record_count--;
   }
 
   ac_sqtt_finish(sctx->sqtt);
@@ -1016,7 +1031,7 @@ si_sqtt_add_code_object(struct si_context* sctx,
    struct rgp_code_object *code_object = &sctx->sqtt->rgp_code_object;
    struct rgp_code_object_record *record;
 
-   record = malloc(sizeof(struct rgp_code_object_record));
+   record = calloc(1, sizeof(struct rgp_code_object_record));
    if (!record)
       return false;
 

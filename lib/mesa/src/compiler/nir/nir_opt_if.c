@@ -473,7 +473,7 @@ opt_split_alu_of_phi(nir_builder *b, nir_loop *loop)
             continue;
 
          nir_src *use = list_first_entry(&alu->def.uses, nir_src, use_link);
-         if (use->is_if || !is_trivial_bcsel(use->parent_instr, true))
+         if (nir_src_is_if(use) || !is_trivial_bcsel(nir_src_parent_instr(use), true))
             continue;
       }
 
@@ -861,22 +861,9 @@ opt_if_simplification(nir_builder *b, nir_if *nif)
        is_block_empty(nir_if_first_else_block(nif)))
       return false;
 
-   /* Make sure the condition is a comparison operation. */
-   nir_instr *src_instr = nif->condition.ssa->parent_instr;
-   if (src_instr->type != nir_instr_type_alu)
-      return false;
-
-   nir_alu_instr *alu_instr = nir_instr_as_alu(src_instr);
-   if (!nir_alu_instr_is_comparison(alu_instr))
-      return false;
-
    /* Insert the inverted instruction and rewrite the condition. */
-   b->cursor = nir_after_instr(&alu_instr->instr);
-
-   nir_def *new_condition =
-      nir_inot(b, &alu_instr->def);
-
-   nir_src_rewrite(&nif->condition, new_condition);
+   b->cursor = nir_before_src(&nif->condition);
+   nir_src_rewrite(&nif->condition, nir_inot(b, nif->condition.ssa));
 
    /* Grab pointers to the last then/else blocks for fixing up the phis. */
    nir_block *then_block = nir_if_last_then_block(nif);
@@ -1274,10 +1261,10 @@ propagate_condition_eval(nir_builder *b, nir_if *nif, nir_src *use_src,
 static bool
 can_propagate_through_alu(nir_src *src)
 {
-   if (src->parent_instr->type != nir_instr_type_alu)
+   if (nir_src_parent_instr(src)->type != nir_instr_type_alu)
       return false;
 
-   nir_alu_instr *alu = nir_instr_as_alu(src->parent_instr);
+   nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(src));
    switch (alu->op) {
    case nir_op_ior:
    case nir_op_iand:
@@ -1305,8 +1292,8 @@ evaluate_condition_use(nir_builder *b, nir_if *nif, nir_src *use_src)
       progress = true;
    }
 
-   if (!use_src->is_if && can_propagate_through_alu(use_src)) {
-      nir_alu_instr *alu = nir_instr_as_alu(use_src->parent_instr);
+   if (!nir_src_is_if(use_src) && can_propagate_through_alu(use_src)) {
+      nir_alu_instr *alu = nir_instr_as_alu(nir_src_parent_instr(use_src));
 
       nir_foreach_use_including_if_safe(alu_use, &alu->def)
          progress |= propagate_condition_eval(b, nif, use_src, alu_use, alu);
@@ -1322,7 +1309,7 @@ opt_if_evaluate_condition_use(nir_builder *b, nir_if *nif)
 
    /* Evaluate any uses of the if condition inside the if branches */
    nir_foreach_use_including_if_safe(use_src, nif->condition.ssa) {
-      if (!(use_src->is_if && use_src->parent_if == nif))
+      if (!(nir_src_is_if(use_src) && nir_src_parent_if(use_src) == nif))
          progress |= evaluate_condition_use(b, nif, use_src);
    }
 
@@ -1340,8 +1327,8 @@ rewrite_comp_uses_within_if(nir_builder *b, nir_if *nif, bool invert,
 
    nir_def *new_ssa = NULL;
    nir_foreach_use_safe(use, scalar.def) {
-      if (use->parent_instr->block->index < first->index ||
-          use->parent_instr->block->index > last->index)
+      if (nir_src_parent_instr(use)->block->index < first->index ||
+          nir_src_parent_instr(use)->block->index > last->index)
          continue;
 
       /* Only rewrite users which use only the new component. This is to avoid a

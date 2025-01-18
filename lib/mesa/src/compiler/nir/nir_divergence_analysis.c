@@ -215,17 +215,13 @@ visit_intrinsic(nir_shader *shader, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_poly_line_smooth_enabled:
    case nir_intrinsic_load_rasterization_primitive_amd:
    case nir_intrinsic_load_global_constant_uniform_block_intel:
+   case nir_intrinsic_cmat_length:
       is_divergent = false;
       break;
 
-   case nir_intrinsic_load_reg:
-   case nir_intrinsic_load_reg_indirect: {
-      nir_intrinsic_instr *decl = nir_reg_get_decl(instr->src[0].ssa);
-      is_divergent = nir_intrinsic_divergent(decl);
-      if (instr->intrinsic == nir_intrinsic_load_reg_indirect)
-         is_divergent |= instr->src[1].ssa->divergent;
+   case nir_intrinsic_decl_reg:
+      is_divergent = nir_intrinsic_divergent(instr);
       break;
-   }
 
    /* Intrinsics with divergence depending on shader stage and hardware */
    case nir_intrinsic_load_shader_record_ptr:
@@ -406,6 +402,7 @@ visit_intrinsic(nir_shader *shader, nir_intrinsic_instr *instr)
       break;
 
    /* Intrinsics with divergence depending on sources */
+   case nir_intrinsic_convert_alu_types:
    case nir_intrinsic_ballot_bitfield_extract:
    case nir_intrinsic_ballot_find_lsb:
    case nir_intrinsic_ballot_find_msb:
@@ -461,7 +458,9 @@ visit_intrinsic(nir_shader *shader, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_desc_set_dynamic_index_intel:
    case nir_intrinsic_load_global_constant_bounded:
    case nir_intrinsic_load_global_constant_offset:
-   case nir_intrinsic_resource_intel: {
+   case nir_intrinsic_resource_intel:
+   case nir_intrinsic_load_reg:
+   case nir_intrinsic_load_reg_indirect: {
       unsigned num_srcs = nir_intrinsic_infos[instr->intrinsic].num_srcs;
       for (unsigned i = 0; i < num_srcs; i++) {
          if (instr->src[i].ssa->divergent) {
@@ -478,6 +477,7 @@ visit_intrinsic(nir_shader *shader, nir_intrinsic_instr *instr)
       break;
 
    /* Intrinsics which are always divergent */
+   case nir_intrinsic_inverse_ballot:
    case nir_intrinsic_load_color0:
    case nir_intrinsic_load_color1:
    case nir_intrinsic_load_param:
@@ -492,6 +492,7 @@ visit_intrinsic(nir_shader *shader, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_barycentric_model:
    case nir_intrinsic_load_barycentric_at_sample:
    case nir_intrinsic_load_barycentric_at_offset:
+   case nir_intrinsic_load_barycentric_at_offset_nv:
    case nir_intrinsic_load_barycentric_coord_pixel:
    case nir_intrinsic_load_barycentric_coord_centroid:
    case nir_intrinsic_load_barycentric_coord_sample:
@@ -603,10 +604,19 @@ visit_intrinsic(nir_shader *shader, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_ray_hit_kind:
    case nir_intrinsic_load_ray_flags:
    case nir_intrinsic_load_cull_mask:
+   case nir_intrinsic_load_sysval_nv:
+   case nir_intrinsic_emit_vertex_nv:
+   case nir_intrinsic_end_primitive_nv:
    case nir_intrinsic_report_ray_intersection:
    case nir_intrinsic_rq_proceed:
    case nir_intrinsic_rq_load:
    case nir_intrinsic_load_ray_triangle_vertex_positions:
+   case nir_intrinsic_cmat_extract:
+   case nir_intrinsic_cmat_muladd_amd:
+   case nir_intrinsic_isberd_nv:
+   case nir_intrinsic_al2p_nv:
+   case nir_intrinsic_ald_nv:
+   case nir_intrinsic_printf:
       is_divergent = true;
       break;
 

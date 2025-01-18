@@ -84,6 +84,7 @@ struct si_state_rasterizer {
    unsigned polygon_mode_is_lines : 1;
    unsigned polygon_mode_is_points : 1;
    unsigned perpendicular_end_caps : 1;
+   unsigned bottom_edge_rule : 1;
 };
 
 struct si_dsa_stencil_ref_part {
@@ -643,6 +644,7 @@ void si_init_draw_functions_GFX9(struct si_context *sctx);
 void si_init_draw_functions_GFX10(struct si_context *sctx);
 void si_init_draw_functions_GFX10_3(struct si_context *sctx);
 void si_init_draw_functions_GFX11(struct si_context *sctx);
+void si_init_draw_functions_GFX11_5(struct si_context *sctx);
 
 /* si_state_msaa.c */
 void si_init_msaa_functions(struct si_context *sctx);

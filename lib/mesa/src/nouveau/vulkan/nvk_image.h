@@ -1,13 +1,17 @@
+/*
+ * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+ * SPDX-License-Identifier: MIT
+ */
 #ifndef NVK_IMAGE_H
 #define NVK_IMAGE_H 1
 
 #include "nvk_private.h"
-#include "nvk_device_memory.h"
+
+#include "vk_image.h"
 
 #include "nil_image.h"
-#include "nouveau_bo.h"
-#include "vulkan/runtime/vk_image.h"
 
+struct nvk_device_memory;
 struct nvk_physical_device;
 
 static VkFormatFeatureFlags2
@@ -26,13 +30,8 @@ struct nvk_image_plane {
    struct nil_image nil;
    uint64_t addr;
 
-#if NVK_NEW_UAPI == 1
    /** Size of the reserved VMA range for sparse images, zero otherwise. */
    uint64_t vma_size_B;
-#else
-   /* Used for internal dedicated allocations */
-   struct nvk_device_memory *internal;
-#endif
 };
 
 struct nvk_image {

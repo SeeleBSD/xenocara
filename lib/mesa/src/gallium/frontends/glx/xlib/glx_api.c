@@ -104,20 +104,21 @@ struct __GLXcontextRec
 };
 
 
-thread_local GLXContext ContextTSD;
+
+static pipe_tsd ContextTSD;
 
 /** Set current context for calling thread */
 static void
 SetCurrentContext(GLXContext c)
 {
-   ContextTSD = c;
+   pipe_tsd_set(&ContextTSD, c);
 }
 
 /** Get current context for calling thread */
 static GLXContext
 GetCurrentContext(void)
 {
-   return ContextTSD;
+   return pipe_tsd_get(&ContextTSD);
 }
 
 
@@ -423,7 +424,7 @@ get_visual( Display *dpy, int scr, unsigned int depth, int xclass )
          return vis;
       }
       else {
-         free((void *) vis);
+         XFree((void *) vis);
          return NULL;
       }
    }

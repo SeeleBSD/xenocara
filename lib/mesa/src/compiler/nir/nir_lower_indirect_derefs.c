@@ -98,7 +98,7 @@ emit_load_store_deref(nir_builder *b, nir_intrinsic_instr *orig_instr,
       /* Copy over any other sources.  This is needed for interp_deref_at */
       for (unsigned i = 1;
            i < nir_intrinsic_infos[orig_instr->intrinsic].num_srcs; i++)
-         nir_src_copy(&load->src[i], &orig_instr->src[i], &load->instr);
+         load->src[i] = nir_src_for_ssa(orig_instr->src[i].ssa);
 
       nir_def_init(&load->instr, &load->def,
                    orig_instr->def.num_components,
@@ -150,6 +150,9 @@ lower_indirect_derefs_block(nir_block *block, nir_builder *b,
       }
 
       if (!has_indirect || !base || indirect_array_len > max_lower_array_len)
+         continue;
+
+      if (glsl_type_is_cmat(base->type))
          continue;
 
       /* Only lower variables whose mode is in the mask, or compact

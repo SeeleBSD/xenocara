@@ -147,6 +147,13 @@ struct ir3_ubo_analysis_state {
    uint32_t size;
 };
 
+enum ir3_push_consts_type {
+   IR3_PUSH_CONSTS_NONE,
+   IR3_PUSH_CONSTS_PER_STAGE,
+   IR3_PUSH_CONSTS_SHARED,
+   IR3_PUSH_CONSTS_SHARED_PREAMBLE,
+};
+
 /**
  * Describes the layout of shader consts in the const register file.
  *
@@ -213,7 +220,7 @@ struct ir3_const_state {
 
    /* State of ubo access lowered to push consts: */
    struct ir3_ubo_analysis_state ubo_state;
-   bool shared_consts_enable;
+   enum ir3_push_consts_type push_consts_type;
 };
 
 /**
@@ -489,6 +496,23 @@ struct ir3_disasm_info {
 /* Represents half register in regid */
 #define HALF_REG_ID 0x100
 
+struct ir3_shader_options {
+   unsigned num_reserved_user_consts;
+   /* What API-visible wavesizes are allowed. Even if only double wavesize is
+    * allowed, we may still use the smaller wavesize "under the hood" and the
+    * application simply sees the upper half as always disabled.
+    */
+   enum ir3_wavesize_option api_wavesize;
+   /* What wavesizes we're allowed to actually use. If the API wavesize is
+    * single-only, then this must be single-only too.
+    */
+   enum ir3_wavesize_option real_wavesize;
+   enum ir3_push_consts_type push_consts_type;
+
+   uint32_t push_consts_base;
+   uint32_t push_consts_dwords;
+};
+
 /**
  * Shader variant which contains the actual hw shader instructions,
  * and necessary info for shader state setup.
@@ -553,6 +577,8 @@ struct ir3_shader_variant {
    (sizeof(struct ir3_shader_variant) - VARIANT_CACHE_START)
 
    struct ir3_info info;
+
+   struct ir3_shader_options shader_options;
 
    uint32_t constant_data_size;
 
@@ -650,6 +676,7 @@ struct ir3_shader_variant {
       bool half       : 1;
       bool flat       : 1;
    } inputs[32 + 2]; /* +POSITION +FACE */
+   bool reads_primid;
 
    /* sum of input components (scalar).  For frag shaders, it only counts
     * the varying inputs:
@@ -750,8 +777,6 @@ struct ir3_shader_variant {
    /* The total number of SSBOs and images, i.e. the number of hardware IBOs. */
    unsigned num_ibos;
 
-   unsigned num_reserved_user_consts;
-
    union {
       struct {
          enum tess_primitive_mode primitive_mode;
@@ -788,8 +813,6 @@ struct ir3_shader_variant {
          unsigned req_local_mem;
       } cs;
    };
-
-   enum ir3_wavesize_option api_wavesize, real_wavesize;
 
    /* For when we don't have a shader, variant's copy of streamout state */
    struct ir3_stream_output_info stream_output;
@@ -848,18 +871,7 @@ struct ir3_shader {
 
    struct ir3_compiler *compiler;
 
-   unsigned num_reserved_user_consts;
-
-   /* What API-visible wavesizes are allowed. Even if only double wavesize is
-    * allowed, we may still use the smaller wavesize "under the hood" and the
-    * application simply sees the upper half as always disabled.
-    */
-   enum ir3_wavesize_option api_wavesize;
-
-   /* What wavesizes we're allowed to actually use. If the API wavesize is
-    * single-only, then this must be single-only too.
-    */
-   enum ir3_wavesize_option real_wavesize;
+   struct ir3_shader_options options;
 
    bool nir_finalized;
    struct nir_shader *nir;
@@ -892,8 +904,6 @@ struct ir3_shader {
     * recompiles for GL NOS that doesn't actually apply to the shader.
     */
    struct ir3_shader_key key_mask;
-
-   bool shared_consts_enable;
 };
 
 /**
@@ -909,13 +919,12 @@ ir3_const_state(const struct ir3_shader_variant *v)
    return v->const_state;
 }
 
-/* Given a variant, calculate the maximum constlen it can have.
- */
 static inline unsigned
-ir3_max_const(const struct ir3_shader_variant *v)
+_ir3_max_const(const struct ir3_shader_variant *v, bool safe_constlen)
 {
    const struct ir3_compiler *compiler = v->compiler;
-   bool shared_consts_enable = ir3_const_state(v)->shared_consts_enable;
+   bool shared_consts_enable =
+      ir3_const_state(v)->push_consts_type == IR3_PUSH_CONSTS_SHARED;
 
    /* Shared consts size for CS and FS matches with what's acutally used,
     * but the size of shared consts for geomtry stages doesn't.
@@ -934,13 +943,30 @@ ir3_max_const(const struct ir3_shader_variant *v)
    if ((v->type == MESA_SHADER_COMPUTE) ||
        (v->type == MESA_SHADER_KERNEL)) {
       return compiler->max_const_compute - shared_consts_size;
-   } else if (v->key.safe_constlen) {
+   } else if (safe_constlen) {
       return compiler->max_const_safe - safe_shared_consts_size;
    } else if (v->type == MESA_SHADER_FRAGMENT) {
       return compiler->max_const_frag - shared_consts_size;
    } else {
       return compiler->max_const_geom - shared_consts_size_geom;
    }
+}
+
+/* Given a variant, calculate the maximum constlen it can have.
+ */
+static inline unsigned
+ir3_max_const(const struct ir3_shader_variant *v)
+{
+   return _ir3_max_const(v, v->key.safe_constlen);
+}
+
+/* Return true if a variant may need to be recompiled due to exceeding the
+ * maximum "safe" constlen.
+ */
+static inline bool
+ir3_exceeds_safe_constlen(const struct ir3_shader_variant *v)
+{
+   return v->constlen > _ir3_max_const(v, true);
 }
 
 void *ir3_shader_assemble(struct ir3_shader_variant *v);
@@ -953,18 +979,11 @@ ir3_shader_get_variant(struct ir3_shader *shader,
                        const struct ir3_shader_key *key, bool binning_pass,
                        bool keep_ir, bool *created);
 
-
-struct ir3_shader_options {
-   unsigned reserved_user_consts;
-   enum ir3_wavesize_option api_wavesize, real_wavesize;
-   bool shared_consts_enable;
-};
-
 struct ir3_shader *
 ir3_shader_from_nir(struct ir3_compiler *compiler, nir_shader *nir,
                     const struct ir3_shader_options *options,
                     struct ir3_stream_output_info *stream_output);
-uint32_t ir3_trim_constlen(struct ir3_shader_variant **variants,
+uint32_t ir3_trim_constlen(const struct ir3_shader_variant **variants,
                            const struct ir3_compiler *compiler);
 struct ir3_shader *
 ir3_shader_passthrough_tcs(struct ir3_shader *vs, unsigned patch_vertices);
@@ -1032,6 +1051,29 @@ ir3_next_varying(const struct ir3_shader_variant *so, int i)
       if (so->inputs[i].compmask && so->inputs[i].bary)
          break;
    return i;
+}
+
+static inline int
+ir3_find_input(const struct ir3_shader_variant *so, gl_varying_slot slot)
+{
+   int j = -1;
+
+   while (true) {
+      j = ir3_next_varying(so, j);
+
+      if (j >= so->inputs_count)
+         return -1;
+
+      if (so->inputs[j].slot == slot)
+         return j;
+   }
+}
+
+static inline unsigned
+ir3_find_input_loc(const struct ir3_shader_variant *so, gl_varying_slot slot)
+{
+   int var = ir3_find_input(so, slot);
+   return var == -1 ? 0xff : so->inputs[var].inloc;
 }
 
 struct ir3_shader_linkage {
@@ -1120,7 +1162,7 @@ ir3_link_shaders(struct ir3_shader_linkage *l,
 
       k = ir3_find_output(vs, (gl_varying_slot)fs->inputs[j].slot);
 
-      if (k < 0 && fs->inputs[j].slot == VARYING_SLOT_PRIMITIVE_ID) {
+      if (fs->inputs[j].slot == VARYING_SLOT_PRIMITIVE_ID) {
          l->primid_loc = fs->inputs[j].inloc;
       }
 
@@ -1168,8 +1210,9 @@ void ir3_link_stream_out(struct ir3_shader_linkage *l,
 static inline uint32_t
 ir3_find_sysval_regid(const struct ir3_shader_variant *so, unsigned slot)
 {
-   int j;
-   for (j = 0; j < so->inputs_count; j++)
+   if (!so)
+      return regid(63, 0);
+   for (int j = 0; j < so->inputs_count; j++)
       if (so->inputs[j].sysval && (so->inputs[j].slot == slot))
          return so->inputs[j].regid;
    return regid(63, 0);

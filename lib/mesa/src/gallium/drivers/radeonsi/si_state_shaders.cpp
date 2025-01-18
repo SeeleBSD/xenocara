@@ -1983,7 +1983,7 @@ static void si_shader_init_pm4_state(struct si_screen *sscreen, struct si_shader
       assert(0);
    }
 
-   assert(!(sscreen->debug_flags & DBG(SQTT)) || shader->pm4.reg_va_low_idx != 0);
+   assert(!(sscreen->debug_flags & DBG(SQTT)) || shader->pm4.spi_shader_pgm_lo_reg != 0);
 }
 
 static void si_clear_vs_key_inputs(struct si_context *sctx, union si_shader_key *key,
@@ -4274,8 +4274,16 @@ static void si_set_patch_vertices(struct pipe_context *ctx, uint8_t patch_vertic
    if (sctx->patch_vertices != patch_vertices) {
       sctx->patch_vertices = patch_vertices;
       si_update_tess_in_out_patch_vertices(sctx);
-      if (sctx->shader.tcs.current)
-         si_update_tess_io_layout_state(sctx);
+      if (sctx->shader.tcs.current) {
+         /* Update the io layout now if possible,
+          * otherwise make sure it's done by si_update_shaders.
+          */
+         if (sctx->tess_rings)
+            si_update_tess_io_layout_state(sctx);
+         else
+            sctx->do_update_shaders = true;
+      }
+
    }
 }
 

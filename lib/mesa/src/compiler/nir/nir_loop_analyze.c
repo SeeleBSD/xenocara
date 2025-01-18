@@ -820,14 +820,47 @@ try_eval_const_alu(nir_const_value *dest, nir_alu_instr *alu,
    return true;
 }
 
+static nir_op
+invert_comparison_if_needed(nir_op alu_op, bool invert)
+{
+   if (!invert)
+      return alu_op;
+
+   switch (alu_op) {
+      case nir_op_fge:
+         return nir_op_flt;
+      case nir_op_ige:
+         return nir_op_ilt;
+      case nir_op_uge:
+         return nir_op_ult;
+      case nir_op_flt:
+         return nir_op_fge;
+      case nir_op_ilt:
+         return nir_op_ige;
+      case nir_op_ult:
+         return nir_op_uge;
+      case nir_op_feq:
+         return nir_op_fneu;
+      case nir_op_ieq:
+         return nir_op_ine;
+      case nir_op_fneu:
+         return nir_op_feq;
+      case nir_op_ine:
+         return nir_op_ieq;
+      default:
+         unreachable("Unsuported comparison!");
+   }
+}
+
 static int32_t
 get_iteration(nir_op cond_op, nir_const_value initial, nir_const_value step,
-              nir_const_value limit, unsigned bit_size,
+              nir_const_value limit, bool invert_cond, unsigned bit_size,
               unsigned execution_mode)
 {
    nir_const_value span, iter;
+   unsigned iter_bit_size = bit_size;
 
-   switch (cond_op) {
+   switch (invert_comparison_if_needed(cond_op, invert_cond)) {
    case nir_op_ine:
       /* In order for execution to be here, limit must be the same as initial.
        * Otherwise will_break_on_first_iteration would have returned false.
@@ -879,13 +912,14 @@ get_iteration(nir_op cond_op, nir_const_value initial, nir_const_value step,
       iter = eval_const_binop(nir_op_fdiv, bit_size, span,
                               step, execution_mode);
       iter = eval_const_unop(nir_op_f2i64, bit_size, iter, execution_mode);
+      iter_bit_size = 64;
       break;
 
    default:
       return -1;
    }
 
-   uint64_t iter_u64 = nir_const_value_as_uint(iter, bit_size);
+   uint64_t iter_u64 = nir_const_value_as_uint(iter, iter_bit_size);
    return iter_u64 > INT_MAX ? -1 : (int)iter_u64;
 }
 
@@ -1018,6 +1052,10 @@ calculate_iterations(nir_def *basis, nir_def *limit_basis,
              induction_base_type);
    }
 
+   if (cond.def->num_components != 1 || basis->num_components != 1 ||
+       limit_basis->num_components != 1)
+      return -1;
+
    /* do-while loops can increment the starting value before the condition is
     * checked. e.g.
     *
@@ -1060,8 +1098,8 @@ calculate_iterations(nir_def *basis, nir_def *limit_basis,
       assert(nir_src_bit_size(alu->src[0].src) ==
              nir_src_bit_size(alu->src[1].src));
 
-      iter_int = get_iteration(alu_op, initial, step, limit, bit_size,
-                               execution_mode);
+      iter_int = get_iteration(alu_op, initial, step, limit, invert_cond,
+                               bit_size, execution_mode);
       break;
    case nir_op_fmul:
       /* Detecting non-zero loop counts when the loop increment is floating
@@ -1087,7 +1125,8 @@ calculate_iterations(nir_def *basis, nir_def *limit_basis,
    if (iter_int < 0)
       return -1;
 
-   if (alu_op == nir_op_ine || alu_op == nir_op_fneu)
+   nir_op actual_alu_op = invert_comparison_if_needed(alu_op, invert_cond);
+   if (actual_alu_op == nir_op_ine || actual_alu_op == nir_op_fneu)
       return iter_int;
 
    /* An explanation from the GLSL unrolling pass:
@@ -1101,11 +1140,13 @@ calculate_iterations(nir_def *basis, nir_def *limit_basis,
     */
    for (int bias = -1; bias <= 1; bias++) {
       const int iter_bias = iter_int + bias;
+      if (iter_bias < 1)
+         continue;
 
       if (test_iterations(iter_bias, step, limit, alu_op, bit_size,
                           induction_base_type, initial,
                           limit_rhs, invert_cond, execution_mode)) {
-         return iter_bias > 0 ? iter_bias - trip_offset : iter_bias;
+         return iter_bias - trip_offset;
       }
    }
 
@@ -1330,7 +1371,7 @@ find_trip_count(loop_info_state *state, unsigned execution_mode,
 
       int iterations = calculate_iterations(lv->basis, limit.def,
                                             initial_val, step_val, limit_val,
-                                            nir_instr_as_alu(lv->update_src->src.parent_instr),
+                                            nir_instr_as_alu(nir_src_parent_instr(&lv->update_src->src)),
                                             cond,
                                             alu_op, limit_rhs,
                                             invert_cond,

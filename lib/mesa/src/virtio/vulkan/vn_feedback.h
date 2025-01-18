@@ -53,6 +53,7 @@ struct vn_feedback_cmd_pool {
    simple_mtx_t mutex;
 
    VkCommandPool pool;
+   struct list_head free_query_feedback_cmds;
 };
 
 /* coherent buffer with bound and mapped memory */
@@ -60,6 +61,23 @@ struct vn_feedback_buffer {
    VkBuffer buffer;
    VkDeviceMemory memory;
    void *data;
+
+   struct list_head head;
+};
+
+/* query feedback batch for deferred recording */
+struct vn_feedback_query_batch {
+   struct vn_query_pool *query_pool;
+   uint32_t query;
+   uint32_t query_count;
+   bool copy;
+
+   struct list_head head;
+};
+
+struct vn_query_feedback_cmd {
+   struct vn_feedback_cmd_pool *pool;
+   struct vn_command_buffer *cmd;
 
    struct list_head head;
 };
@@ -136,12 +154,15 @@ vn_feedback_event_cmd_record(VkCommandBuffer cmd_handle,
                              VkResult status,
                              bool sync2);
 
-void
-vn_feedback_query_cmd_record(VkCommandBuffer cmd_handle,
-                             VkQueryPool pool_handle,
-                             uint32_t query,
-                             uint32_t count,
-                             bool copy);
+VkResult
+vn_feedback_query_cmd_alloc(VkDevice dev_handle,
+                            struct vn_feedback_cmd_pool *feedback_pool,
+                            struct vn_query_feedback_cmd **out_feedback_cmd);
+
+VkResult
+vn_feedback_query_batch_record(VkDevice dev_handle,
+                               struct vn_query_feedback_cmd *feedback_cmd,
+                               struct list_head *combined_query_batches);
 
 VkResult
 vn_feedback_cmd_alloc(VkDevice dev_handle,

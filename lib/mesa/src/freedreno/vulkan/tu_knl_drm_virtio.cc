@@ -101,9 +101,8 @@ struct tu_virtio_device {
 };
 
 #define virtio_ioctl(fd, name, args) ({                              \
-      MESA_TRACE_BEGIN(#name);                                       \
+      MESA_TRACE_SCOPE(#name);                                       \
       int ret = drmIoctl((fd), DRM_IOCTL_ ## name, (args));          \
-      MESA_TRACE_END();                                              \
       ret;                                                           \
    })
 
@@ -236,10 +235,9 @@ out_unlock:
       return ret;
 
    if (sync) {
-      MESA_TRACE_BEGIN("virtio_execbuf sync");
+      MESA_TRACE_SCOPE("virtio_execbuf sync");
       sync_wait(fence_fd, -1);
       close(fence_fd);
-      MESA_TRACE_END();
    }
 
    return 0;
@@ -1338,14 +1336,18 @@ tu_queue_submit_locked(struct tu_queue *queue, struct tu_queue_submit *submit)
    if (ret)
       return vk_device_set_lost(&queue->device->vk, "submit failed: %m");
 
+   uint64_t gpu_offset = 0;
 #if HAVE_PERFETTO
-   tu_perfetto_submit(queue->device, queue->device->submit_count);
+   struct tu_perfetto_clocks clocks =
+      tu_perfetto_submit(queue->device, queue->device->submit_count, NULL);
+   gpu_offset = clocks.gpu_ts_offset;
 #endif
 
    if (submit->u_trace_submission_data) {
       struct tu_u_trace_submission_data *submission_data =
          submit->u_trace_submission_data;
       submission_data->submission_id = queue->device->submit_count;
+      submission_data->gpu_ts_offset = gpu_offset;
       /* We have to allocate it here since it is different between drm/kgsl */
       submission_data->syncobj = (struct tu_u_trace_syncobj *)
          vk_alloc(&queue->device->vk.alloc, sizeof(struct tu_u_trace_syncobj),
@@ -1443,6 +1445,7 @@ virtio_queue_submit(struct tu_queue *queue, struct vk_queue_submit *submit)
       in_syncobjs[nr_in_syncobjs++] = (struct drm_virtgpu_execbuffer_syncobj) {
          .handle = tu_syncobj_from_vk_sync(sync),
          .flags = 0,
+         .point = submit->waits[i].wait_value,
       };
    }
 
@@ -1452,6 +1455,7 @@ virtio_queue_submit(struct tu_queue *queue, struct vk_queue_submit *submit)
       out_syncobjs[nr_out_syncobjs++] = (struct drm_virtgpu_execbuffer_syncobj) {
          .handle = tu_syncobj_from_vk_sync(sync),
          .flags = 0,
+         .point = submit->signals[i].signal_value,
       };
    }
 
@@ -1591,7 +1595,7 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
    device->sync_types[1] = &device->timeline_type.sync;
    device->sync_types[2] = NULL;
 
-   device->heap.size = tu_get_system_heap_size();
+   device->heap.size = tu_get_system_heap_size(device);
    device->heap.used = 0u;
    device->heap.flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
 

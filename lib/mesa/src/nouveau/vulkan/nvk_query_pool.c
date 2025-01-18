@@ -1,20 +1,28 @@
+/*
+ * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+ * SPDX-License-Identifier: MIT
+ */
 #include "nvk_query_pool.h"
 
 #include "nvk_buffer.h"
 #include "nvk_cmd_buffer.h"
 #include "nvk_device.h"
+#include "nvk_entrypoints.h"
 #include "nvk_event.h"
 #include "nvk_mme.h"
 #include "nvk_physical_device.h"
 #include "nvk_pipeline.h"
 
-#include "compiler/nir/nir.h"
-#include "compiler/nir/nir_builder.h"
-#include "nouveau_bo.h"
-#include "nouveau_context.h"
-#include "util/os_time.h"
 #include "vk_meta.h"
 #include "vk_pipeline.h"
+
+#include "compiler/nir/nir.h"
+#include "compiler/nir/nir_builder.h"
+
+#include "nouveau_bo.h"
+#include "nouveau_context.h"
+
+#include "util/os_time.h"
 
 #include "nvk_cl906f.h"
 #include "nvk_cl9097.h"
@@ -41,8 +49,8 @@ nvk_CreateQueryPool(VkDevice device,
       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    /* We place the availability first and then data */
-   pool->query_start = ALIGN_POT(pool->vk.query_count * sizeof(uint32_t),
-                                 sizeof(struct nvk_query_report));
+   pool->query_start = align(pool->vk.query_count * sizeof(uint32_t),
+                             sizeof(struct nvk_query_report));
 
    uint32_t reports_per_query;
    switch (pCreateInfo->queryType) {
@@ -210,8 +218,6 @@ nvk_CmdResetQueryPool(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_query_pool, pool, queryPool);
 
-   nvk_cmd_buffer_ref_bo(cmd, pool->bo);
-
    for (uint32_t i = 0; i < queryCount; i++) {
       uint64_t addr = nvk_query_available_addr(pool, firstQuery + i);
 
@@ -257,8 +263,6 @@ nvk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_query_pool, pool, queryPool);
-
-   nvk_cmd_buffer_ref_bo(cmd, pool->bo);
 
    struct nv_push *p = nvk_cmd_buffer_push(cmd, 10);
 
@@ -503,8 +507,6 @@ nvk_CmdBeginQueryIndexedEXT(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_query_pool, pool, queryPool);
 
-   nvk_cmd_buffer_ref_bo(cmd, pool->bo);
-
    nvk_cmd_begin_end_query(cmd, pool, query, index, false);
 }
 
@@ -516,8 +518,6 @@ nvk_CmdEndQueryIndexedEXT(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_query_pool, pool, queryPool);
-
-   nvk_cmd_buffer_ref_bo(cmd, pool->bo);
 
    nvk_cmd_begin_end_query(cmd, pool, query, index, true);
 
@@ -1111,8 +1111,6 @@ nvk_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_query_pool, pool, queryPool);
    VK_FROM_HANDLE(nvk_buffer, dst_buffer, dstBuffer);
-
-   nvk_cmd_buffer_ref_bo(cmd, pool->bo);
 
    if (flags & VK_QUERY_RESULT_WAIT_BIT) {
       for (uint32_t i = 0; i < queryCount; i++) {

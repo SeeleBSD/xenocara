@@ -3242,6 +3242,7 @@ Converter::run()
    subgroup_options.ballot_bit_size = 32;
    subgroup_options.ballot_components = 1;
    subgroup_options.lower_elect = true;
+   subgroup_options.lower_inverse_ballot = true;
 
    unsigned lower_flrp = (nir->options->lower_flrp16 ? 16 : 0) |
                          (nir->options->lower_flrp32 ? 32 : 0) |
@@ -3464,7 +3465,7 @@ nvir_nir_shader_compiler_options(int chipset, uint8_t shader_type)
    op.unify_interfaces = false;
    op.use_interpolated_input_intrinsics = true;
    op.lower_mul_2x32_64 = true; // TODO
-   op.lower_rotate = (chipset < NVISA_GV100_CHIPSET);
+   op.has_rotate32 = (chipset >= NVISA_GV100_CHIPSET);
    op.has_imul24 = false;
    op.has_fmulz = (chipset > NVISA_G80_CHIPSET);
    op.intel_vec4 = false;

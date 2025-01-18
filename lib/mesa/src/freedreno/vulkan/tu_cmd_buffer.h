@@ -22,8 +22,14 @@
 enum tu_draw_state_group_id
 {
    TU_DRAW_STATE_PROGRAM_CONFIG,
-   TU_DRAW_STATE_PROGRAM,
-   TU_DRAW_STATE_PROGRAM_BINNING,
+   TU_DRAW_STATE_VS,
+   TU_DRAW_STATE_VS_BINNING,
+   TU_DRAW_STATE_HS,
+   TU_DRAW_STATE_DS,
+   TU_DRAW_STATE_GS,
+   TU_DRAW_STATE_GS_BINNING,
+   TU_DRAW_STATE_VPC,
+   TU_DRAW_STATE_FS,
    TU_DRAW_STATE_VB,
    TU_DRAW_STATE_CONST,
    TU_DRAW_STATE_DESC_SETS,
@@ -35,7 +41,6 @@ enum tu_draw_state_group_id
    TU_DRAW_STATE_LRZ_AND_DEPTH_PLANE,
    TU_DRAW_STATE_PRIM_MODE_GMEM,
    TU_DRAW_STATE_PRIM_MODE_SYSMEM,
-   TU_DRAW_STATE_MSAA,
 
    /* dynamic state related draw states */
    TU_DRAW_STATE_DYNAMIC,
@@ -47,7 +52,7 @@ struct tu_descriptor_state
    struct tu_descriptor_set *sets[MAX_SETS];
    struct tu_descriptor_set push_set;
    uint32_t dynamic_descriptors[MAX_DYNAMIC_BUFFERS_SIZE];
-   uint64_t set_iova[MAX_SETS + 1];
+   uint64_t set_iova[MAX_SETS];
    uint32_t max_sets_bound;
    bool dynamic_bound;
 };
@@ -64,9 +69,10 @@ enum tu_cmd_dirty_bits
    TU_CMD_DIRTY_SUBPASS = BIT(7),
    TU_CMD_DIRTY_FDM = BIT(8),
    TU_CMD_DIRTY_PER_VIEW_VIEWPORT = BIT(9),
-   TU_CMD_DIRTY_PIPELINE = BIT(10),
+   TU_CMD_DIRTY_TES = BIT(10),
+   TU_CMD_DIRTY_PROGRAM = BIT(11),
    /* all draw states were disabled and need to be re-enabled: */
-   TU_CMD_DIRTY_DRAW_STATE = BIT(11)
+   TU_CMD_DIRTY_DRAW_STATE = BIT(12)
 };
 
 /* There are only three cache domains we have to care about: the CCU, or
@@ -379,8 +385,9 @@ struct tu_cmd_state
 {
    uint32_t dirty;
 
-   struct tu_graphics_pipeline *pipeline;
-   struct tu_compute_pipeline *compute_pipeline;
+   struct tu_shader *shaders[MESA_SHADER_STAGES];
+
+   struct tu_program_state program;
 
    struct tu_render_pass_state rp;
 
@@ -402,14 +409,15 @@ struct tu_cmd_state
    uint32_t max_vbs_bound;
 
    bool per_view_viewport;
-   bool pipeline_has_fdm;
 
    /* saved states to re-emit in TU_CMD_DIRTY_DRAW_STATE case */
    struct tu_draw_state dynamic_state[TU_DYNAMIC_STATE_COUNT];
    struct tu_draw_state vertex_buffers;
    struct tu_draw_state shader_const;
    struct tu_draw_state desc_sets;
-   struct tu_draw_state msaa;
+   struct tu_draw_state load_state;
+   struct tu_draw_state compute_load_state;
+   struct tu_draw_state prim_order_sysmem, prim_order_gmem;
 
    struct tu_draw_state vs_params;
    struct tu_draw_state fs_params;
@@ -473,6 +481,10 @@ struct tu_cmd_state
    bool blend_reads_dest;
    bool stencil_front_write;
    bool stencil_back_write;
+   bool pipeline_feedback_loop_ds;
+
+   bool pipeline_blend_lrz, pipeline_bandwidth;
+   uint32_t pipeline_draw_states;
 
    /* VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT and
     * VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT are allowed to run simultaniously,
@@ -599,11 +611,14 @@ void tu_render_pass_state_merge(struct tu_render_pass_state *dst,
 VkResult tu_cmd_buffer_begin(struct tu_cmd_buffer *cmd_buffer,
                              const VkCommandBufferBeginInfo *pBeginInfo);
 
+template <chip CHIP>
 void
 tu_emit_cache_flush(struct tu_cmd_buffer *cmd_buffer);
 
+template <chip CHIP>
 void tu_emit_cache_flush_renderpass(struct tu_cmd_buffer *cmd_buffer);
 
+template <chip CHIP>
 void tu_emit_cache_flush_ccu(struct tu_cmd_buffer *cmd_buffer,
                              struct tu_cs *cs,
                              enum tu_cmd_ccu_state ccu_state);
@@ -624,12 +639,16 @@ void
 tu_restore_suspended_pass(struct tu_cmd_buffer *cmd,
                           struct tu_cmd_buffer *suspended);
 
+template <chip CHIP>
 void tu_cmd_render(struct tu_cmd_buffer *cmd);
 
+enum fd_gpu_event : uint32_t;
+
+template <chip CHIP>
 void
-tu6_emit_event_write(struct tu_cmd_buffer *cmd,
-                     struct tu_cs *cs,
-                     enum vgt_event_type event);
+tu_emit_event_write(struct tu_cmd_buffer *cmd,
+                    struct tu_cs *cs,
+                    enum fd_gpu_event event);
 
 static inline struct tu_descriptor_state *
 tu_get_descriptors_state(struct tu_cmd_buffer *cmd_buffer,

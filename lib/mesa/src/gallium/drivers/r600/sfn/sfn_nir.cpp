@@ -780,8 +780,7 @@ r600_shader_from_nir(struct r600_context *rctx,
    }
 
    auto sh = nir_shader_clone(sel->nir, sel->nir);
-   r600::sort_uniforms(sel->nir);
-
+   r600::sort_uniforms(sh);
 
    while (optimize_once(sh))
       ;
@@ -965,8 +964,7 @@ r600_shader_from_nir(struct r600_context *rctx,
       }
    }
 
-   if (!r600::sfn_log.has_debug_flag(r600::SfnLog::noaddrsplit))
-      split_address_loads(*shader);
+   split_address_loads(*shader);
    
    if (r600::sfn_log.has_debug_flag(r600::SfnLog::steps)) {
       std::cerr << "Shader after splitting address loads\n";
@@ -985,7 +983,7 @@ r600_shader_from_nir(struct r600_context *rctx,
    auto scheduled_shader = r600::schedule(shader);
    if (r600::sfn_log.has_debug_flag(r600::SfnLog::steps)) {
       std::cerr << "Shader after scheduling\n";
-      shader->print(std::cerr);
+      scheduled_shader->print(std::cerr);
    }
 
    if (!r600::sfn_log.has_debug_flag(r600::SfnLog::nomerge)) {
@@ -1020,17 +1018,15 @@ r600_shader_from_nir(struct r600_context *rctx,
 
    /* We already schedule the code with this in mind, no need to handle this
     * in the backend assembler */
-   if (!r600::sfn_log.has_debug_flag(r600::SfnLog::noaddrsplit)) {
-      pipeshader->shader.bc.ar_handling = AR_HANDLE_NORMAL;
-      pipeshader->shader.bc.r6xx_nop_after_rel_dst = 0;
-   }
+   pipeshader->shader.bc.ar_handling = AR_HANDLE_NORMAL;
+   pipeshader->shader.bc.r6xx_nop_after_rel_dst = 0;
 
    r600::sfn_log << r600::SfnLog::shader_info << "pipeshader->shader.processor_type = "
                  << pipeshader->shader.processor_type << "\n";
 
    pipeshader->shader.bc.type = pipeshader->shader.processor_type;
    pipeshader->shader.bc.isa = rctx->isa;
-   pipeshader->shader.bc.ngpr = shader->required_registers();
+   pipeshader->shader.bc.ngpr = scheduled_shader->required_registers();
 
    r600::Assembler afs(&pipeshader->shader, *key);
    if (!afs.lower(scheduled_shader)) {

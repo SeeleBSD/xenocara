@@ -101,47 +101,18 @@ typedef struct {
 static bool
 instr_can_speculate(nir_instr *instr)
 {
+   /* Intrinsics with an ACCESS index can only be speculated if they are
+    * explicitly CAN_SPECULATE.
+    */
    if (instr->type == nir_instr_type_intrinsic) {
       nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-      return nir_intrinsic_access(intr) & ACCESS_CAN_SPECULATE;
-   } else {
-      return true;
+
+      if (nir_intrinsic_has_access(intr))
+         return nir_intrinsic_access(intr) & ACCESS_CAN_SPECULATE;
    }
-}
 
-static bool
-can_speculate(nir_instr *instr, opt_preamble_ctx *ctx)
-{
-   /* If we are only contained within uniform control flow, no speculation is
-    * needed since the control flow will be reconstructed in the preamble.
-    */
-   if (ctx->nonuniform_cf_nesting == 0)
-      return true;
-
-   /* Otherwise we can only hoist if the backend can speculate */
-   return instr_can_speculate(instr);
-}
-
-static bool
-needs_speculate(nir_instr *instr)
-{
-   if (instr->type != nir_instr_type_intrinsic)
-      return false;
-
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-   switch (intr->intrinsic) {
-   case nir_intrinsic_load_ubo:
-   case nir_intrinsic_load_ubo_vec4:
-   case nir_intrinsic_load_global_constant:
-   case nir_intrinsic_load_constant_agx:
-   case nir_intrinsic_image_load:
-   case nir_intrinsic_image_samples_identical:
-   case nir_intrinsic_bindless_image_load:
-   case nir_intrinsic_load_ssbo:
-      return true;
-   default:
-      return false;
-   }
+   /* For now, everything else can be speculated. TODO: Bindless textures. */
+   return true;
 }
 
 static float
@@ -179,6 +150,7 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_load_push_constant:
    case nir_intrinsic_load_work_dim:
    case nir_intrinsic_load_num_workgroups:
+   case nir_intrinsic_load_workgroup_size:
    case nir_intrinsic_load_ray_launch_size:
    case nir_intrinsic_load_ray_launch_size_addr_amd:
    case nir_intrinsic_load_sbt_base_amd:
@@ -227,9 +199,6 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_load_subgroup_size:
    case nir_intrinsic_load_num_subgroups:
       return ctx->options->subgroup_size_uniform;
-
-   case nir_intrinsic_load_workgroup_size:
-      return ctx->options->load_workgroup_size_allowed;
 
    /* Intrinsics which can be moved if the sources can */
    case nir_intrinsic_load_ubo:
@@ -283,7 +252,11 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
 static bool
 can_move_instr(nir_instr *instr, opt_preamble_ctx *ctx)
 {
-   if (needs_speculate(instr) && !can_speculate(instr, ctx))
+   /* If we are only contained within uniform control flow, no speculation is
+    * needed since the control flow will be reconstructed in the preamble. But
+    * if we are not, we must be able to speculate instructions to move them.
+    */
+   if (ctx->nonuniform_cf_nesting > 0 && !instr_can_speculate(instr))
       return false;
 
    switch (instr->type) {
@@ -304,17 +277,10 @@ can_move_instr(nir_instr *instr, opt_preamble_ctx *ctx)
        * TODO: Replace derivatives with 0 instead, if real apps hit this.
        */
       nir_alu_instr *alu = nir_instr_as_alu(instr);
-      switch (alu->op) {
-      case nir_op_fddx:
-      case nir_op_fddy:
-      case nir_op_fddx_fine:
-      case nir_op_fddy_fine:
-      case nir_op_fddx_coarse:
-      case nir_op_fddy_coarse:
+      if (nir_op_is_derivative(alu->op))
          return false;
-      default:
+      else
          return can_move_srcs(instr, ctx);
-      }
    }
    case nir_instr_type_intrinsic:
       return can_move_intrinsic(nir_instr_as_intrinsic(instr), ctx);
@@ -428,13 +394,12 @@ calculate_can_move_for_block(opt_preamble_ctx *ctx, nir_block *block)
 {
    bool all_can_move = true;
 
-   nir_foreach_instr (instr, block) {
+   nir_foreach_instr(instr, block) {
       nir_def *def = nir_instr_def(instr);
       if (!def)
          continue;
 
       def_state *state = &ctx->states[def->index];
-
       state->can_move = can_move_instr(instr, ctx);
       all_can_move &= state->can_move;
    }
@@ -498,63 +463,63 @@ static void
 replace_for_block(nir_builder *b, opt_preamble_ctx *ctx,
                   struct hash_table *remap_table, nir_block *block)
 {
-    nir_foreach_instr (instr, block) {
-       nir_def *def = nir_instr_def(instr);
-       if (!def)
-          continue;
+   nir_foreach_instr(instr, block) {
+      nir_def *def = nir_instr_def(instr);
+      if (!def)
+         continue;
 
-       /* Only replace what we actually need. This is a micro-optimization for
-        * compile-time performance of regular instructions, but it's required for
-        * correctness with phi nodes, since we might not reconstruct the
-        * corresponding if.
-        */
-       if (!BITSET_TEST(ctx->reconstructed_defs, def->index))
-          continue;
+      /* Only replace what we actually need. This is a micro-optimization for
+       * compile-time performance of regular instructions, but it's required for
+       * correctness with phi nodes, since we might not reconstruct the
+       * corresponding if.
+       */
+      if (!BITSET_TEST(ctx->reconstructed_defs, def->index))
+         continue;
 
-       def_state *state = &ctx->states[def->index];
-       assert(state->can_move && "reconstructed => can_move");
+      def_state *state = &ctx->states[def->index];
+      assert(state->can_move && "reconstructed => can_move");
 
-       nir_instr *clone;
+      nir_instr *clone;
 
-       if (instr->type == nir_instr_type_phi) {
-          /* Phis are special since they can't be cloned with nir_instr_clone */
-          nir_phi_instr *phi = nir_instr_as_phi(instr);
+      if (instr->type == nir_instr_type_phi) {
+         /* Phis are special since they can't be cloned with nir_instr_clone */
+         nir_phi_instr *phi = nir_instr_as_phi(instr);
 
-          nir_cf_node *nif_cf = nir_cf_node_prev(&block->cf_node);
-          assert(nif_cf->type == nir_cf_node_if && "only if's are moveable");
-          nir_if *nif = nir_cf_node_as_if(nif_cf);
+         nir_cf_node *nif_cf = nir_cf_node_prev(&block->cf_node);
+         assert(nif_cf->type == nir_cf_node_if && "only if's are moveable");
+         nir_if *nif = nir_cf_node_as_if(nif_cf);
 
-          nir_block *then_block = nir_if_last_then_block(nif);
-          nir_block *else_block = nir_if_last_else_block(nif);
+         nir_block *then_block = nir_if_last_then_block(nif);
+         nir_block *else_block = nir_if_last_else_block(nif);
 
-          nir_def *then_def = NULL, *else_def = NULL;
+         nir_def *then_def = NULL, *else_def = NULL;
 
-          nir_foreach_phi_src(phi_src, phi) {
-             if (phi_src->pred == then_block) {
-                assert(then_def == NULL);
-                then_def = phi_src->src.ssa;
-             } else if (phi_src->pred == else_block) {
-                assert(else_def == NULL);
-                else_def = phi_src->src.ssa;
-             } else {
-                unreachable("Invalid predecessor for phi of if");
-             }
-          }
+         nir_foreach_phi_src(phi_src, phi) {
+            if (phi_src->pred == then_block) {
+               assert(then_def == NULL);
+               then_def = phi_src->src.ssa;
+            } else if (phi_src->pred == else_block) {
+               assert(else_def == NULL);
+               else_def = phi_src->src.ssa;
+            } else {
+               unreachable("Invalid predecessor for phi of if");
+            }
+         }
 
-          assert(exec_list_length(&phi->srcs) == 2 && "only if's are movable");
-          assert(then_def && else_def && "all sources seen");
+         assert(exec_list_length(&phi->srcs) == 2 && "only if's are movable");
+         assert(then_def && else_def && "all sources seen");
 
-          /* Remap */
-          then_def = _mesa_hash_table_search(remap_table, then_def)->data;
-          else_def = _mesa_hash_table_search(remap_table, else_def)->data;
+         /* Remap */
+         then_def = _mesa_hash_table_search(remap_table, then_def)->data;
+         else_def = _mesa_hash_table_search(remap_table, else_def)->data;
 
-          b->cursor =
-             nir_before_block_after_phis(nir_cursor_current_block(b->cursor));
+         b->cursor =
+            nir_before_block_after_phis(nir_cursor_current_block(b->cursor));
 
-          nir_def *repl = nir_if_phi(b, then_def, else_def);
-          clone = repl->parent_instr;
+         nir_def *repl = nir_if_phi(b, then_def, else_def);
+         clone = repl->parent_instr;
 
-          _mesa_hash_table_insert(remap_table, &phi->def, repl);
+         _mesa_hash_table_insert(remap_table, &phi->def, repl);
       } else {
          clone = nir_instr_clone_deep(b->shader, instr, remap_table);
          nir_builder_instr_insert(b, clone);
@@ -583,13 +548,12 @@ replace_for_block(nir_builder *b, opt_preamble_ctx *ctx,
          nir_def *clone_def = nir_instr_def(clone);
          nir_store_preamble(b, clone_def, .base = state->offset);
       }
-    }
+   }
 }
 
 static void
 replace_for_cf_list(nir_builder *b, opt_preamble_ctx *ctx,
-                    struct hash_table *remap_table, struct exec_list *list,
-                    bool speculate_only)
+                    struct hash_table *remap_table, struct exec_list *list)
 {
    foreach_list_typed(nir_cf_node, node, node, list) {
       switch (node->type) {
@@ -614,25 +578,25 @@ replace_for_cf_list(nir_builder *b, opt_preamble_ctx *ctx,
             reconstructed_nif = nir_push_if(b, remap_cond);
 
             b->cursor = nir_before_cf_list(&reconstructed_nif->then_list);
-            replace_for_cf_list(b, ctx, remap_table, &nif->then_list, false);
+            replace_for_cf_list(b, ctx, remap_table, &nif->then_list);
 
             b->cursor = nir_before_cf_list(&reconstructed_nif->else_list);
-            replace_for_cf_list(b, ctx, remap_table, &nif->else_list, false);
+            replace_for_cf_list(b, ctx, remap_table, &nif->else_list);
 
             nir_pop_if(b, reconstructed_nif);
             b->cursor = nir_after_cf_node(&reconstructed_nif->cf_node);
          } else {
-            replace_for_cf_list(b, ctx, remap_table, &nif->then_list, true);
-            replace_for_cf_list(b, ctx, remap_table, &nif->else_list, true);
+            replace_for_cf_list(b, ctx, remap_table, &nif->then_list);
+            replace_for_cf_list(b, ctx, remap_table, &nif->else_list);
          }
 
          break;
       }
 
       case nir_cf_node_loop: {
-         /* We don't try to reconstruct loops, so we only speculate inside */
+         /* We don't try to reconstruct loops */
          nir_loop *loop = nir_cf_node_as_loop(node);
-         replace_for_cf_list(b, ctx, remap_table, &loop->body, true);
+         replace_for_cf_list(b, ctx, remap_table, &loop->body);
          break;
       }
 
@@ -662,7 +626,14 @@ analyze_speculation_for_cf_list(opt_preamble_ctx *ctx, struct exec_list *list)
       switch (node->type) {
       case nir_cf_node_block: {
          nir_foreach_instr(instr, nir_cf_node_as_block(node)) {
-            if (needs_speculate(instr) && !instr_can_speculate(instr)) {
+            nir_def *def = nir_instr_def(instr);
+            if (!def)
+               continue;
+
+            if (!BITSET_TEST(ctx->reconstructed_defs, def->index))
+               continue;
+
+            if (!instr_can_speculate(instr)) {
                reconstruct_cf_list = true;
                break;
             }
@@ -782,7 +753,6 @@ nir_opt_preamble(nir_shader *shader, const nir_opt_preamble_options *options,
 
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
    ctx.states = calloc(impl->ssa_alloc, sizeof(*ctx.states));
-   ctx.reconstructed_ifs = _mesa_pointer_set_create(NULL);
 
    /* Step 1: Calculate can_move */
    calculate_can_move_for_cf_list(&ctx, &impl->body);
@@ -815,13 +785,13 @@ nir_opt_preamble(nir_shader *shader, const nir_opt_preamble_options *options,
          bool is_candidate = !avoid_instr(instr, options);
          state->candidate = false;
          state->must_stay = false;
-         nir_foreach_use_including_if (use, def) {
+         nir_foreach_use_including_if(use, def) {
             bool is_can_move_user;
 
-            if (use->is_if) {
+            if (nir_src_is_if(use)) {
                is_can_move_user = false;
             } else {
-               nir_def *use_def = nir_instr_def(use->parent_instr);
+               nir_def *use_def = nir_instr_def(nir_src_parent_instr(use));
                is_can_move_user = use_def != NULL &&
                                   ctx.states[use_def->index].can_move &&
                                   !ctx.states[use_def->index].must_stay;
@@ -943,10 +913,16 @@ nir_opt_preamble(nir_shader *shader, const nir_opt_preamble_options *options,
    /* Determine which if's need to be reconstructed, based on the replacements
     * we did.
     */
+   ctx.reconstructed_ifs = _mesa_pointer_set_create(NULL);
    ctx.reconstructed_defs = calloc(BITSET_WORDS(impl->ssa_alloc),
                                    sizeof(BITSET_WORD));
    analyze_reconstructed(&ctx, impl);
-   analyze_speculation_for_cf_list(&ctx, &impl->body);
+
+   /* If we make progress analyzing speculation, we need to re-analyze
+    * reconstructed defs to get the if-conditions in there.
+    */
+   if (analyze_speculation_for_cf_list(&ctx, &impl->body))
+      analyze_reconstructed(&ctx, impl);
 
    /* Step 5: Actually do the replacement. */
    struct hash_table *remap_table =
@@ -956,20 +932,20 @@ nir_opt_preamble(nir_shader *shader, const nir_opt_preamble_options *options,
    nir_builder preamble_builder = nir_builder_at(nir_before_impl(preamble));
    nir_builder *b = &preamble_builder;
 
-   replace_for_cf_list(b, &ctx, remap_table, &impl->body, false);
+   replace_for_cf_list(b, &ctx, remap_table, &impl->body);
 
    nir_builder builder = nir_builder_create(impl);
    b = &builder;
 
-   unsigned old_ssa_alloc = impl->ssa_alloc;
-   nir_foreach_block (block, impl) {
-      nir_foreach_instr_safe (instr, block) {
+   unsigned max_index = impl->ssa_alloc;
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr_safe(instr, block) {
          nir_def *def = nir_instr_def(instr);
          if (!def)
             continue;
 
          /* Ignore new load_preamble instructions */
-         if (def->index >= old_ssa_alloc)
+         if (def->index >= max_index)
             continue;
 
          def_state *state = &ctx.states[def->index];

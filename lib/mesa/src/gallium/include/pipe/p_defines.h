@@ -186,6 +186,7 @@ enum pipe_tex_reduction_mode {
  */
 enum pipe_map_flags
 {
+   PIPE_MAP_NONE = 0,
    /**
     * Resource contents read back (or accessed directly) at transfer
     * create time.
@@ -394,6 +395,15 @@ enum pipe_flush_flags
 #define PIPE_CONTEXT_PROTECTED         (1 << 7)
 
 /**
+ * Create a context that does not use sampler LOD bias. If this is set, the
+ * frontend MUST set pipe_sampler_state::lod_bias to 0.0f for all samplers used
+ * with the context. Drivers MAY ignore lod_bias for such contexts.
+ *
+ * This may allow driver fast paths for GLES, which lacks sampler LOD bias.
+ */
+#define PIPE_CONTEXT_NO_LOD_BIAS (1 << 8)
+
+/**
  * Flags for pipe_context::memory_barrier.
  */
 #define PIPE_BARRIER_MAPPED_BUFFER     (1 << 0)
@@ -471,7 +481,7 @@ enum pipe_flush_flags
 /* Resource is the DRI_PRIME blit destination. Only set on on the render GPU. */
 #define PIPE_BIND_PRIME_BLIT_DST (1 << 24)
 #define PIPE_BIND_USE_FRONT_RENDERING (1 << 25) /* Resource may be used for frontbuffer rendering */
-
+#define PIPE_BIND_CONST_BW    (1 << 26) /* Avoid using a data dependent layout (AFBC, UBWC, etc) */
 
 /**
  * Flags for the driver about resource behaviour:
@@ -799,7 +809,6 @@ enum pipe_cap
    PIPE_CAP_LEGACY_MATH_RULES,
    PIPE_CAP_DOUBLES,
    PIPE_CAP_INT64,
-   PIPE_CAP_INT64_DIVMOD,
    PIPE_CAP_TGSI_TEX_TXF_LZ,
    PIPE_CAP_SHADER_CLOCK,
    PIPE_CAP_POLYGON_MODE_FILL_RECTANGLE,
@@ -925,6 +934,7 @@ enum pipe_cap
    PIPE_CAP_ASTC_VOID_EXTENTS_NEED_DENORM_FLUSH,
 
    PIPE_CAP_VALIDATE_ALL_DIRTY_STATES,
+   PIPE_CAP_HAS_CONST_BW,
    PIPE_CAP_LAST,
    /* XXX do not add caps after PIPE_CAP_LAST! */
 };
@@ -1017,7 +1027,6 @@ enum pipe_shader_cap
    PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS,
    PIPE_SHADER_CAP_TGSI_SQRT_SUPPORTED,
    PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS,
-   PIPE_SHADER_CAP_DROUND_SUPPORTED, /* all rounding modes */
    PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE,
    PIPE_SHADER_CAP_MAX_SHADER_BUFFERS,
    PIPE_SHADER_CAP_SUPPORTED_IRS,

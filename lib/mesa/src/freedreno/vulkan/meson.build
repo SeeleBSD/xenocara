@@ -42,7 +42,6 @@ libtu_files = files(
 libtu_includes = [
     inc_include,
     inc_src,
-    inc_compiler,
     inc_freedreno,
 ]
 
@@ -111,7 +110,7 @@ tu_tracepoints = custom_target(
 )
 
 if with_perfetto
-  libtu_files += ['tu_perfetto.cc', 'tu_perfetto_util.cc']
+  libtu_files += ['tu_perfetto.cc']
   tu_deps += dep_perfetto
 endif
 
@@ -202,6 +201,7 @@ freedreno_icd = custom_target(
   ],
   build_by_default : true,
   install_dir : with_vulkan_icd_dir,
+  install_tag : 'runtime',
   install : true,
 )
 

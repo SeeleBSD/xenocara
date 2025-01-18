@@ -1,3 +1,7 @@
+/*
+ * Copyright © 2022 Collabora Ltd.
+ * SPDX-License-Identifier: MIT
+ */
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -49,9 +53,7 @@ private:
    struct nouveau_ws_context *ctx;
    struct nouveau_ws_bo *data_bo;
    struct nouveau_ws_bo *push_bo;
-#if NVK_NEW_UAPI == 1
    uint32_t syncobj;
-#endif
    void *push_map;
    struct nv_push push;
 };

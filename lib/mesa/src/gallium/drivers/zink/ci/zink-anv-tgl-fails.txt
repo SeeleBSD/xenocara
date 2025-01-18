@@ -113,19 +113,10 @@ glx@glx-buffer-age,Fail
 glx@glx-buffer-age vblank_mode=0,Fail
 
 glx@glx-swap-pixmap-bad,Fail
-glx@glx-tfp,Crash
 
 # ../src/gallium/drivers/zink/zink_kopper.c:859: zink_kopper_update: Assertion `pres->bind & PIPE_BIND_DISPLAY_TARGET' failed.
 glx@glx-visuals-depth -pixmap,Crash
 glx@glx-visuals-stencil -pixmap,Crash
-
-shaders@point-vertex-id divisor,Fail
-shaders@point-vertex-id gl_instanceid divisor,Fail
-shaders@point-vertex-id gl_instanceid,Fail
-shaders@point-vertex-id gl_vertexid divisor,Fail
-shaders@point-vertex-id gl_vertexid gl_instanceid divisor,Fail
-shaders@point-vertex-id gl_vertexid gl_instanceid,Fail
-shaders@point-vertex-id gl_vertexid,Fail
 
 spec@!opengl 1.0@gl-1.0-no-op-paths,Fail
 
@@ -693,5 +684,4 @@ spec@arb_gpu_shader_fp64@execution@arb_gpu_shader_fp64-fs-getuniformdv,Crash
 spec@arb_gpu_shader_fp64@execution@arb_gpu_shader_fp64-gs-getuniformdv,Crash
 spec@arb_gpu_shader_fp64@execution@arb_gpu_shader_fp64-vs-getuniformdv,Crash
 
-# ../src/util/simple_mtx.h:131: simple_mtx_unlock: Assertion `c != _SIMPLE_MTX_INVALID_VALUE' failed.
-dEQP-EGL.functional.sharing.gles2.multithread.simple_egl_sync.programs.link,Crash
+spec@arb_fragment_layer_viewport@layer-no-gs,Fail

@@ -99,6 +99,25 @@ fd_set_sample_mask(struct pipe_context *pctx, unsigned sample_mask) in_dt
 }
 
 static void
+fd_set_sample_locations(struct pipe_context *pctx, size_t size,
+                        const uint8_t *locations)
+  in_dt
+{
+   struct fd_context *ctx = fd_context(pctx);
+
+   if (!locations) {
+      ctx->sample_locations_enabled = false;
+      return;
+   }
+
+   size = MIN2(size, sizeof(ctx->sample_locations));
+   memcpy(ctx->sample_locations, locations, size);
+   ctx->sample_locations_enabled = true;
+
+   fd_context_dirty(ctx, FD_DIRTY_SAMPLE_LOCATIONS);
+}
+
+static void
 fd_set_min_samples(struct pipe_context *pctx, unsigned min_samples) in_dt
 {
    struct fd_context *ctx = fd_context(pctx);
@@ -140,8 +159,10 @@ fd_set_constant_buffer(struct pipe_context *pctx, enum pipe_shader_type shader,
       return;
    }
 
-   if (cb->user_buffer && ctx->screen->gen >= 6)
+   if (cb->user_buffer && ctx->screen->gen >= 6) {
       upload_user_buffer(pctx, &so->cb[index]);
+      cb = &so->cb[index];
+   }
 
    so->enabled_mask |= 1 << index;
 
@@ -683,6 +704,10 @@ fd_set_stream_output_targets(struct pipe_context *pctx, unsigned num_targets,
       if (targets[i]) {
          fd_resource_set_usage(targets[i]->buffer, FD_DIRTY_STREAMOUT);
          fd_dirty_resource(ctx, targets[i]->buffer, FD_DIRTY_STREAMOUT, true);
+
+         struct fd_stream_output_target *target = fd_stream_output_target(targets[i]);
+         fd_resource_set_usage(target->offset_buf, FD_DIRTY_STREAMOUT);
+         fd_dirty_resource(ctx, target->offset_buf, FD_DIRTY_STREAMOUT, true);
       }
 
       if (!changed && !reset)
@@ -805,6 +830,7 @@ fd_state_init(struct pipe_context *pctx)
    pctx->set_shader_buffers = fd_set_shader_buffers;
    pctx->set_shader_images = fd_set_shader_images;
    pctx->set_framebuffer_state = fd_set_framebuffer_state;
+   pctx->set_sample_locations = fd_set_sample_locations;
    pctx->set_polygon_stipple = fd_set_polygon_stipple;
    pctx->set_scissor_states = fd_set_scissor_states;
    pctx->set_viewport_states = fd_set_viewport_states;

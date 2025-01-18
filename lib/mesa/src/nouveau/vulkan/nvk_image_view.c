@@ -1,10 +1,16 @@
+/*
+ * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+ * SPDX-License-Identifier: MIT
+ */
 #include "nvk_image_view.h"
 
 #include "nvk_device.h"
-#include "nvk_physical_device.h"
+#include "nvk_entrypoints.h"
 #include "nvk_format.h"
 #include "nvk_image.h"
-#include "vulkan/util/vk_format.h"
+#include "nvk_physical_device.h"
+
+#include "vk_format.h"
 
 static enum nil_view_type
 vk_image_view_type_to_nil_view_type(VkImageViewType view_type)
@@ -181,8 +187,8 @@ nvk_image_view_init(struct nvk_device *dev,
             assert(view->vk.layer_count == 1);
             nil_view.type = NIL_VIEW_TYPE_2D_ARRAY;
             nil_view.num_levels = 1;
-            nil_view.base_array_layer = 0;
-            nil_view.array_len = view->vk.extent.depth;
+            nil_view.base_array_layer = view->vk.storage.z_slice_offset;
+            nil_view.array_len = view->vk.storage.z_slice_count;
             image_3d_view_as_2d_array(&nil_image, &nil_view, &base_addr);
          }
 

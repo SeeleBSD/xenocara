@@ -251,6 +251,10 @@ op("fcmpsel",
       encoding_32 = (0x02, 0x7F, 8, 10),
       srcs = 4, imms = [FCOND])
 
+# Pseudo-instructions for compares returning 1/0
+op("icmp", _, srcs = 2, imms = [ICOND, INVERT_COND])
+op("fcmp", _, srcs = 2, imms = [FCOND, INVERT_COND])
+
 # sources are coordinates, LOD, texture bindless base (zero for texture state
 # registers), texture, sampler, shadow/offset
 # TODO: anything else?
@@ -330,7 +334,7 @@ op("st_tile", (0x09, 0x7F, 8, _), dests = 0, srcs = 2,
       can_eliminate = False, imms = [FORMAT, MASK, PIXEL_OFFSET],
       schedule_class = "coverage")
 
-for (name, exact) in [("any", 0xC000), ("none", 0xC020)]:
+for (name, exact) in [("any", 0xC000), ("none", 0xC020), ("none_after", 0xC020)]:
    op("jmp_exec_" + name, (exact, (1 << 16) - 1, 6, _), dests = 0, srcs = 0,
          can_eliminate = False, schedule_class = "invalid", imms = [TARGET])
 
@@ -346,7 +350,7 @@ for is_float in [False, True]:
       name = "{}_{}cmp".format(cf, "f" if is_float else "i")
       exact = 0x42 | (0x0 if is_float else 0x10) | (cf_op << 9)
       mask = 0x7F | (0x3 << 9) | mod_mask | (0x3 << 44)
-      imms = [NEST, FCOND if is_float else ICOND, INVERT_COND]
+      imms = [NEST, FCOND if is_float else ICOND, INVERT_COND, TARGET]
 
       op(name, (exact, mask, 6, _), dests = 0, srcs = 2, can_eliminate = False,
             imms = imms, is_float = is_float,
@@ -380,9 +384,9 @@ op("signal_pix", (0x58, 0xFF, 4, _), dests = 0, imms = [WRITEOUT],
 op("image_write", (0xF1 | (1 << 23) | (9 << 43), 0xFF, 6, 8), dests = 0, srcs = 5, imms
    = [DIM], can_eliminate = False, schedule_class = "store")
 
-# Sources are the image and the offset within shared memory
+# Sources are the image, the offset within shared memory, and the layer.
 # TODO: Do we need the short encoding?
-op("block_image_store", (0xB1, 0xFF, 10, _), dests = 0, srcs = 2,
+op("block_image_store", (0xB1, 0xFF, 10, _), dests = 0, srcs = 3,
    imms = [FORMAT, DIM], can_eliminate = False, schedule_class = "store")
 
 # Barriers
@@ -410,10 +414,6 @@ op("xor", _, srcs = 2)
 op("and", _, srcs = 2)
 op("or", _, srcs = 2)
 
-# Indicates the logical end of the block, before final branches/control flow
-op("logical_end", _, dests = 0, srcs = 0, can_eliminate = False,
-   schedule_class = "invalid")
-
 op("collect", _, srcs = VARIABLE)
 op("split", _, srcs = 1, dests = VARIABLE)
 op("phi", _, srcs = VARIABLE, schedule_class = "preload")
@@ -424,6 +424,12 @@ op("unit_test", _, dests = 0, srcs = 1, can_eliminate = False)
 # to be coalesced during RA, rather than lowered to a real move. 
 op("preload", _, srcs = 1, schedule_class = "preload")
 
-# Set the nesting counter. Lowers to mov_imm r0l, #nest after RA.
-op("nest", _, dests = 0, imms = [IMM], can_eliminate = False,
-   schedule_class = "barrier")
+# Pseudo-instructions to set the nesting counter. Lowers to r0l writes after RA.
+op("begin_cf", _, dests = 0, can_eliminate = False)
+op("break", _, dests = 0, imms = [NEST, TARGET], can_eliminate = False,
+   schedule_class = "invalid")
+
+for (name, is_float) in [("break_if_icmp", False), ("break_if_fcmp", True)]:
+    op(name, _, dests = 0, srcs = 2,
+       imms = [NEST, INVERT_COND, FCOND if is_float else ICOND, TARGET],
+       can_eliminate = False, schedule_class = "invalid")

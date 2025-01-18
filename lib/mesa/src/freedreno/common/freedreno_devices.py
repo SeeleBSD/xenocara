@@ -22,10 +22,19 @@
 
 from mako.template import Template
 import sys
+import argparse
 from enum import Enum
 
 def max_bitfield_val(high, low, shift):
     return ((1 << (high - low)) - 1) << shift
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-p', '--import-path', required=True)
+args = parser.parse_args()
+sys.path.insert(0, args.import_path)
+
+from a6xx import *
 
 
 class CHIP(Enum):
@@ -131,7 +140,10 @@ class A6xxGPUInfo(GPUInfo):
        into distinct sub-generations.  The template parameter avoids
        duplication of parameters that are unique to the sub-generation.
     """
-    def __init__(self, chip, template, num_ccu, tile_align_w, tile_align_h, num_vsc_pipes, cs_shared_mem_size, wave_granularity, fibers_per_sp, magic_regs):
+    def __init__(self, chip, template, num_ccu,
+                 tile_align_w, tile_align_h, num_vsc_pipes,
+                 cs_shared_mem_size, wave_granularity, fibers_per_sp,
+                 magic_regs, raw_magic_regs = None, max_sets = 5):
         super().__init__(chip, gmem_align_w = 16, gmem_align_h = 4,
                          tile_align_w = tile_align_w,
                          tile_align_h = tile_align_h,
@@ -146,10 +158,15 @@ class A6xxGPUInfo(GPUInfo):
         self.num_ccu = num_ccu
 
         self.a6xx = Struct()
+        self.a7xx = Struct()
+
         self.a6xx.magic = Struct()
 
         for name, val in magic_regs.items():
             setattr(self.a6xx.magic, name, val)
+
+        if raw_magic_regs:
+            self.a6xx.magic_raw = [[int(r[0]), r[1]] for r in raw_magic_regs]
 
         # Things that earlier gens have and later gens remove, provide
         # defaults here and let them be overridden by sub-gen template:
@@ -168,10 +185,16 @@ class A6xxGPUInfo(GPUInfo):
 
         self.a6xx.vs_max_inputs_count = 32
 
-        for name, val in template.items():
-            if name == "magic": # handled above
-                continue
-            setattr(self.a6xx, name, val)
+        self.a6xx.max_sets = max_sets
+
+        templates = template if type(template) is list else [template]
+        for template in templates:
+            template.apply_props(self)
+
+
+    def __str__(self):
+     return super(A6xxGPUInfo, self).__str__().replace('[', '{').replace("]", "}")
+
 
 # a2xx is really two sub-generations, a20x and a22x, but we don't currently
 # capture that in the device-info tables
@@ -277,12 +300,27 @@ add_gpus([
         fibers_per_sp = 64 * 16, # Lowest number that didn't fault on spillall fs-varying-array-mat4-col-row-rd.
     ))
 
+
+class A6XXProps(dict):
+    def apply_props(self, gpu_info):
+        for name, val in self.items():
+            if name == "magic":
+                continue
+            setattr(gpu_info.a6xx, name, val)
+
+
+class A7XXProps(dict):
+    def apply_props(self, gpu_info):
+        for name, val in self.items():
+            setattr(gpu_info.a7xx, name, val)
+
+
 # a6xx can be divided into distinct sub-generations, where certain device-
 # info parameters are keyed to the sub-generation.  These templates reduce
 # the copypaste
 
 # a615, a616, a618, a619, a620 and a630:
-a6xx_gen1 = dict(
+a6xx_gen1 = A6XXProps(
         reg_size_vec4 = 96,
         instr_cache_size = 64,
         concurrent_resolve = False,
@@ -292,7 +330,7 @@ a6xx_gen1 = dict(
     )
 
 # a605, a608, a610, 612
-a6xx_gen1_low = {**a6xx_gen1, **dict(
+a6xx_gen1_low = A6XXProps({**a6xx_gen1, **A6XXProps(
         has_gmem_fast_clear = False,
         reg_size_vec4 = 48,
         has_hw_multiview = False,
@@ -302,10 +340,10 @@ a6xx_gen1_low = {**a6xx_gen1, **dict(
         gmem_ccu_color_cache_fraction = CCUColorCacheFraction.HALF.value,
         vs_max_inputs_count = 16,
         supports_double_threadsize = False,
-)}
+)})
 
 # a640, a680:
-a6xx_gen2 = dict(
+a6xx_gen2 = A6XXProps(
         reg_size_vec4 = 96,
         instr_cache_size = 64, # TODO
         supports_multiview_mask = True,
@@ -318,7 +356,7 @@ a6xx_gen2 = dict(
     )
 
 # a650:
-a6xx_gen3 = dict(
+a6xx_gen3 = A6XXProps(
         reg_size_vec4 = 64,
         # Blob limits it to 128 but we hang with 128
         instr_cache_size = 127,
@@ -339,7 +377,7 @@ a6xx_gen3 = dict(
     )
 
 # a635, a660:
-a6xx_gen4 = dict(
+a6xx_gen4 = A6XXProps(
         reg_size_vec4 = 64,
         # Blob limits it to 128 but we hang with 128
         instr_cache_size = 127,
@@ -577,6 +615,7 @@ add_gpus([
         GPUId(chip_id=0x00be06030500, name="Adreno 8c Gen 3"),
         GPUId(chip_id=0x007506030500, name="Adreno 7c+ Gen 3"),
         GPUId(chip_id=0x006006030500, name="Adreno 7c+ Gen 3 Lite"),
+        GPUId(chip_id=0x00ac06030500, name="FD643"), # e.g. QCM6490, Fairphone 5
         # fallback wildcard entry should be last:
         GPUId(chip_id=0xffff06030500, name="Adreno 7c+ Gen 3"),
     ], A6xxGPUInfo(
@@ -637,6 +676,7 @@ add_gpus([
 
 add_gpus([
         GPUId(690),
+        GPUId(chip_id=0xffff06090000, name="FD690"), # Default no-speedbin fallback
     ], A6xxGPUInfo(
         CHIP.A6XX,
         a6xx_gen4,
@@ -664,13 +704,18 @@ add_gpus([
         )
     ))
 
-# Minimal definition needed for ir3 assembler/disassembler
+a7xx_730 = A7XXProps()
+
+a7xx_740 = A7XXProps(
+        stsc_duplication_quirk = True,
+    )
+
 add_gpus([
-        GPUId(730),
-        GPUId(740),
+        GPUId(chip_id=0x07030001, name="FD730"), # KGSL, no speedbin data
+        GPUId(chip_id=0xffff07030001, name="FD730"), # Default no-speedbin fallback
     ], A6xxGPUInfo(
         CHIP.A7XX,
-        a6xx_gen4,
+        [a6xx_gen4, a7xx_730],
         num_ccu = 4,
         tile_align_w = 64,
         tile_align_h = 32,
@@ -678,7 +723,111 @@ add_gpus([
         cs_shared_mem_size = 32 * 1024,
         wave_granularity = 2,
         fibers_per_sp = 128 * 2 * 16,
-        magic_regs = dict()
+        magic_regs = dict(
+            # PC_POWER_CNTL = 7,
+            TPL1_DBG_ECO_CNTL = 0x1000000,
+            GRAS_DBG_ECO_CNTL = 0x800,
+            SP_CHICKEN_BITS = 0x1440,
+            UCHE_CLIENT_PF = 0x00000084,
+            PC_MODE_CNTL = 0x0000003f, # 0x00001f1f in some tests
+            SP_DBG_ECO_CNTL = 0x10000000,
+            RB_DBG_ECO_CNTL = 0x00000000,
+            RB_DBG_ECO_CNTL_blit = 0x00000000,  # is it even needed?
+            # HLSQ_DBG_ECO_CNTL = 0x0,
+            RB_UNKNOWN_8E01 = 0x0,
+            VPC_DBG_ECO_CNTL = 0x02000000,
+            UCHE_UNKNOWN_0E12 = 0x3200000
+        ),
+        raw_magic_regs = [
+            [A6XXRegs.REG_A6XX_UCHE_CACHE_WAYS, 0x00840004],
+            [A6XXRegs.REG_A6XX_TPL1_UNKNOWN_B602, 0x00000724],
+
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE08, 0x00002400],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE09, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE0A, 0x00000000],
+            [A6XXRegs.REG_A7XX_UCHE_UNKNOWN_0E10, 0x00000000],
+            [A6XXRegs.REG_A7XX_UCHE_UNKNOWN_0E11, 0x00000040],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6C, 0x00008000],
+            [A6XXRegs.REG_A6XX_PC_DBG_ECO_CNTL, 0x20080000],
+            [A6XXRegs.REG_A7XX_PC_UNKNOWN_9E24, 0x21fc7f00],
+            [A6XXRegs.REG_A7XX_VFD_UNKNOWN_A600, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE06, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6A, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6B, 0x00000080],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE73, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB02, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
+
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
+        ],
+        max_sets = 8,
+    ))
+
+add_gpus([
+        GPUId(740), # Deprecated, used for dev kernels.
+        GPUId(chip_id=0x43050a01, name="FD740"), # KGSL, no speedbin data
+        GPUId(chip_id=0xffff43050a01, name="FD740"), # Default no-speedbin fallback
+    ], A6xxGPUInfo(
+        CHIP.A7XX,
+        [a6xx_gen4, a7xx_740],
+        num_ccu = 6,
+        tile_align_w = 64,
+        tile_align_h = 32,
+        num_vsc_pipes = 32,
+        cs_shared_mem_size = 32 * 1024,
+        wave_granularity = 2,
+        fibers_per_sp = 128 * 2 * 16,
+        magic_regs = dict(
+            # PC_POWER_CNTL = 7,
+            TPL1_DBG_ECO_CNTL = 0x11100000,
+            GRAS_DBG_ECO_CNTL = 0x00004800,
+            SP_CHICKEN_BITS = 0x10001400,
+            UCHE_CLIENT_PF = 0x00000084,
+            # Blob uses 0x1f or 0x1f1f, however these values cause vertices
+            # corruption in some tests.
+            PC_MODE_CNTL = 0x0000003f,
+            SP_DBG_ECO_CNTL = 0x10000000,
+            RB_DBG_ECO_CNTL = 0x00000000,
+            RB_DBG_ECO_CNTL_blit = 0x00000000,  # is it even needed?
+            # HLSQ_DBG_ECO_CNTL = 0x0,
+            RB_UNKNOWN_8E01 = 0x0,
+            VPC_DBG_ECO_CNTL = 0x02000000,
+            UCHE_UNKNOWN_0E12 = 0x00000000
+        ),
+        raw_magic_regs = [
+            [A6XXRegs.REG_A6XX_UCHE_CACHE_WAYS, 0x00040004],
+            [A6XXRegs.REG_A6XX_TPL1_UNKNOWN_B602, 0x00000724],
+
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE08, 0x00000400],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE09, 0x00430800],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE0A, 0x00000000],
+            [A6XXRegs.REG_A7XX_UCHE_UNKNOWN_0E10, 0x00000000],
+            [A6XXRegs.REG_A7XX_UCHE_UNKNOWN_0E11, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6C, 0x00000000],
+            [A6XXRegs.REG_A6XX_PC_DBG_ECO_CNTL, 0x00100000],
+            [A6XXRegs.REG_A7XX_PC_UNKNOWN_9E24, 0x21585600],
+            [A6XXRegs.REG_A7XX_VFD_UNKNOWN_A600, 0x00008000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE06, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6A, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6B, 0x00000080],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE73, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB02, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
+            [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
+
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8120, 0x09510840],
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8121, 0x00000a62],
+
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_8009, 0x00000000],
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800A, 0x00000000],
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800B, 0x00000000],
+            [A6XXRegs.REG_A7XX_GRAS_UNKNOWN_800C, 0x00000000],
+        ],
+        max_sets = 8,
     ))
 
 template = """\

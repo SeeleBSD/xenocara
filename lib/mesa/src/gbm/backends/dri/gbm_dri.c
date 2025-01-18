@@ -270,7 +270,11 @@ dri_open_driver(struct gbm_dri_device *dri)
    /* XXX: Library name differs on per platforms basis. Update this as
     * osx/cygwin/windows/bsd gets support for GBM..
     */
+#ifdef __OpenBSD__
+   dlopen("libglapi.so", RTLD_LAZY | RTLD_GLOBAL);
+#else
    dlopen("libglapi.so.0", RTLD_LAZY | RTLD_GLOBAL);
+#endif
 
    static const char *search_path_vars[] = {
       /* Read GBM_DRIVERS_PATH first for compatibility, but LIBGL_DRIVERS_PATH
@@ -365,22 +369,15 @@ dri_screen_create_sw(struct gbm_dri_device *dri)
    char *driver_name;
    int ret;
 
-   driver_name = strdup("zink");
+   driver_name = strdup("kms_swrast");
    if (!driver_name)
       return -errno;
 
    ret = dri_screen_create_for_driver(dri, driver_name);
-   if (ret != 0) {
-      driver_name = strdup("kms_swrast");
-      if (!driver_name)
-         return -errno;
-
-      ret = dri_screen_create_for_driver(dri, driver_name);
-      if (ret != 0)
-         ret = dri_screen_create_for_driver(dri, NULL);
-      if (ret != 0)
-         return ret;
-   }
+   if (ret != 0)
+      ret = dri_screen_create_for_driver(dri, NULL);
+   if (ret != 0)
+      return ret;
 
    dri->software = true;
    return 0;

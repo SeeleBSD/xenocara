@@ -254,7 +254,7 @@ panfrost_set_shader_images(struct pipe_context *pctx,
                            const struct pipe_image_view *iviews)
 {
    struct panfrost_context *ctx = pan_context(pctx);
-   ctx->dirty_shader[PIPE_SHADER_FRAGMENT] |= PAN_DIRTY_STAGE_IMAGE;
+   ctx->dirty_shader[shader] |= PAN_DIRTY_STAGE_IMAGE;
 
    /* Unbind start_slot...start_slot+count */
    if (!iviews) {
@@ -283,7 +283,7 @@ panfrost_set_shader_images(struct pipe_context *pctx,
        */
       if (drm_is_afbc(rsrc->image.layout.modifier)) {
          pan_resource_modifier_convert(
-            ctx, rsrc, DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED,
+            ctx, rsrc, DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED, true,
             "Shader image");
       }
 
@@ -560,6 +560,7 @@ panfrost_destroy(struct pipe_context *pipe)
 
    panfrost_pool_cleanup(&panfrost->descs);
    panfrost_pool_cleanup(&panfrost->shaders);
+   panfrost_afbc_context_destroy(panfrost);
 
    drmSyncobjDestroy(dev->fd, panfrost->in_sync_obj);
    if (panfrost->in_sync_fd != -1)
@@ -943,6 +944,7 @@ panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
 
    panfrost_resource_context_init(gallium);
    panfrost_shader_context_init(gallium);
+   panfrost_afbc_context_init(ctx);
 
    gallium->stream_uploader = u_upload_create_default(gallium);
    gallium->const_uploader = gallium->stream_uploader;

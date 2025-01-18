@@ -43,7 +43,6 @@ static const struct debug_control radv_debug_options[] = {{"nofastclears", RADV_
                                                           {"allbos", RADV_DEBUG_ALL_BOS},
                                                           {"noibs", RADV_DEBUG_NO_IBS},
                                                           {"spirv", RADV_DEBUG_DUMP_SPIRV},
-                                                          {"vmfaults", RADV_DEBUG_VM_FAULTS},
                                                           {"zerovram", RADV_DEBUG_ZERO_VRAM},
                                                           {"syncshaders", RADV_DEBUG_SYNC_SHADERS},
                                                           {"preoptir", RADV_DEBUG_PREOPTIR},
@@ -100,6 +99,7 @@ static const struct debug_control radv_perftest_options[] = {{"localbos", RADV_P
                                                              {"ngg_streamout", RADV_PERFTEST_NGG_STREAMOUT},
                                                              {"video_decode", RADV_PERFTEST_VIDEO_DECODE},
                                                              {"dmashaders", RADV_PERFTEST_DMA_SHADERS},
+                                                             {"gsfastlaunch2", RADV_PERFTEST_GS_FAST_LAUNCH_2},
                                                              {NULL, 0}};
 
 const char *
@@ -128,21 +128,23 @@ static const driOptionDescription radv_dri_options[] = {
       DRI_CONF_RADV_ENABLE_MRT_OUTPUT_NAN_FIXUP(false)
       DRI_CONF_RADV_DISABLE_SHRINK_IMAGE_STORE(false)
       DRI_CONF_RADV_NO_DYNAMIC_BOUNDS(false)
-      DRI_CONF_RADV_ABSOLUTE_DEPTH_BIAS(false)
       DRI_CONF_RADV_OVERRIDE_UNIFORM_OFFSET_ALIGNMENT(0)
    DRI_CONF_SECTION_END
 
    DRI_CONF_SECTION_DEBUG
       DRI_CONF_OVERRIDE_VRAM_SIZE()
       DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(false)
+      DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(false)
+      DRI_CONF_VK_REQUIRE_ETC2(false)
+      DRI_CONF_VK_REQUIRE_ASTC(false)
       DRI_CONF_RADV_ZERO_VRAM(false)
       DRI_CONF_RADV_LOWER_DISCARD_TO_DEMOTE(false)
       DRI_CONF_RADV_INVARIANT_GEOM(false)
       DRI_CONF_RADV_SPLIT_FMA(false)
       DRI_CONF_RADV_DISABLE_TC_COMPAT_HTILE_GENERAL(false)
       DRI_CONF_RADV_DISABLE_DCC(false)
-      DRI_CONF_RADV_REQUIRE_ETC2(false)
       DRI_CONF_RADV_DISABLE_ANISO_SINGLE_LEVEL(false)
+      DRI_CONF_RADV_DISABLE_TRUNC_COORD(false)
       DRI_CONF_RADV_DISABLE_SINKING_LOAD_INPUT_FS(false)
       DRI_CONF_RADV_DGC(false)
       DRI_CONF_RADV_FLUSH_BEFORE_QUERY_COPY(false)
@@ -151,6 +153,8 @@ static const driOptionDescription radv_dri_options[] = {
       DRI_CONF_RADV_FLUSH_BEFORE_TIMESTAMP_WRITE(false)
       DRI_CONF_RADV_RT_WAVE64(false)
       DRI_CONF_DUAL_COLOR_BLEND_BY_LOCATION(false)
+      DRI_CONF_RADV_SSBO_NON_UNIFORM(false)
+      DRI_CONF_RADV_FORCE_ACTIVE_ACCEL_STRUCT_LEAVES(false)
       DRI_CONF_RADV_APP_LAYER()
    DRI_CONF_SECTION_END
 };
@@ -167,8 +171,6 @@ radv_init_dri_options(struct radv_instance *instance)
    instance->enable_mrt_output_nan_fixup = driQueryOptionb(&instance->dri_options, "radv_enable_mrt_output_nan_fixup");
 
    instance->disable_shrink_image_store = driQueryOptionb(&instance->dri_options, "radv_disable_shrink_image_store");
-
-   instance->absolute_depth_bias = driQueryOptionb(&instance->dri_options, "radv_absolute_depth_bias");
 
    instance->disable_tc_compat_htile_in_general =
       driQueryOptionb(&instance->dri_options, "radv_disable_tc_compat_htile_general");
@@ -192,6 +194,8 @@ radv_init_dri_options(struct radv_instance *instance)
 
    instance->disable_aniso_single_level = driQueryOptionb(&instance->dri_options, "radv_disable_aniso_single_level");
 
+   instance->disable_trunc_coord = driQueryOptionb(&instance->dri_options, "radv_disable_trunc_coord");
+
    instance->disable_sinking_load_input_fs =
       driQueryOptionb(&instance->dri_options, "radv_disable_sinking_load_input_fs");
 
@@ -201,6 +205,8 @@ radv_init_dri_options(struct radv_instance *instance)
 
    instance->tex_non_uniform = driQueryOptionb(&instance->dri_options, "radv_tex_non_uniform");
 
+   instance->ssbo_non_uniform = driQueryOptionb(&instance->dri_options, "radv_ssbo_non_uniform");
+
    instance->app_layer = driQueryOptionstr(&instance->dri_options, "radv_app_layer");
 
    instance->flush_before_timestamp_write =
@@ -209,6 +215,9 @@ radv_init_dri_options(struct radv_instance *instance)
    instance->force_rt_wave64 = driQueryOptionb(&instance->dri_options, "radv_rt_wave64");
 
    instance->dual_color_blend_by_location = driQueryOptionb(&instance->dri_options, "dual_color_blend_by_location");
+
+   instance->force_active_accel_struct_leaves =
+      driQueryOptionb(&instance->dri_options, "radv_force_active_accel_struct_leaves");
 }
 
 static const struct vk_instance_extension_table radv_instance_extensions_supported = {
@@ -251,7 +260,7 @@ static const struct vk_instance_extension_table radv_instance_extensions_support
 static void
 radv_handle_legacy_sqtt_trigger(struct vk_instance *instance)
 {
-   char *trigger_file = getenv("RADV_THREAD_TRACE_TRIGGER");
+   char *trigger_file = secure_getenv("RADV_THREAD_TRACE_TRIGGER");
    if (trigger_file) {
       instance->trace_trigger_file = trigger_file;
       instance->trace_mode |= RADV_TRACE_MODE_RGP;

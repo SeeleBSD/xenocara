@@ -49,7 +49,8 @@
 
 #include "errno.h"
 #include "common/intel_aux_map.h"
-#include "common/intel_clflush.h"
+#include "common/intel_mem.h"
+#include "c99_alloca.h"
 #include "dev/intel_debug.h"
 #include "common/intel_gem.h"
 #include "dev/intel_device_info.h"
@@ -525,7 +526,10 @@ iris_bo_wait_syncobj(struct iris_bo *bo, int64_t timeout_ns)
 
    simple_mtx_lock(&bufmgr->bo_deps_lock);
 
-   uint32_t handles[bo->deps_size * IRIS_BATCH_COUNT * 2 + is_external];
+   const int handles_len = bo->deps_size * IRIS_BATCH_COUNT * 2 + is_external;
+   uint32_t *handles = handles_len <= 32 ?
+                        (uint32_t *)alloca(handles_len * sizeof(*handles)) :
+                        (uint32_t *)malloc(handles_len * sizeof(*handles));
    int handle_count = 0;
 
    if (is_external) {
@@ -575,6 +579,8 @@ iris_bo_wait_syncobj(struct iris_bo *bo, int64_t timeout_ns)
    }
 
 out:
+   if (handles_len > 32)
+      free(handles);
    if (external_implicit_syncobj)
       iris_syncobj_reference(bufmgr, &external_implicit_syncobj, NULL);
 
@@ -1242,7 +1248,9 @@ iris_bo_alloc(struct iris_bufmgr *bufmgr,
    return bo;
 
 err_vm_alloc:
+   simple_mtx_lock(&bufmgr->lock);
    vma_free(bufmgr, bo->address, bo->size);
+   simple_mtx_unlock(&bufmgr->lock);
 err_free:
    simple_mtx_lock(&bufmgr->lock);
    bo_free(bo);
@@ -1318,7 +1326,9 @@ iris_bo_create_userptr(struct iris_bufmgr *bufmgr, const char *name,
    return bo;
 
 err_vma_free:
+   simple_mtx_lock(&bufmgr->lock);
    vma_free(bufmgr, bo->address, bo->size);
+   simple_mtx_unlock(&bufmgr->lock);
 err_close:
    bufmgr->kmd_backend->gem_close(bufmgr, bo);
 err_free:
@@ -1403,6 +1413,7 @@ iris_bo_gem_create_from_name(struct iris_bufmgr *bufmgr,
    bo->bufmgr = bufmgr;
    bo->gem_handle = open_arg.handle;
    bo->name = name;
+   bo->index = -1;
    bo->real.global_name = handle;
    bo->real.prime_fd = -1;
    bo->real.reusable = false;
@@ -1964,6 +1975,7 @@ iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd,
 
    bo->bufmgr = bufmgr;
    bo->name = "prime";
+   bo->index = -1;
    bo->real.reusable = false;
    bo->real.imported = true;
    bo->real.mmap_mode = IRIS_MMAP_NONE;

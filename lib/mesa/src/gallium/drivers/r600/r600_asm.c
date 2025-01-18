@@ -29,6 +29,7 @@
 #include <errno.h>
 #include "util/u_bitcast.h"
 #include "util/u_dump.h"
+#include "util/u_endian.h"
 #include "util/u_memory.h"
 #include "util/u_math.h"
 #include "pipe/p_shader_tokens.h"
@@ -1307,11 +1308,10 @@ int r600_bytecode_add_alu_type(struct r600_bytecode *bc,
 	}
 	bc->cf_last->op = type;
 
-	/* Load index register if required */
 	if (bc->gfx_level >= EVERGREEN) {
 		for (i = 0; i < 3; i++)
 			if (nalu->src[i].kc_bank &&  nalu->src[i].kc_rel)
-				egcm_load_index_reg(bc, nalu->src[i].kc_rel - 1, true);
+				assert(bc->index_loaded[nalu->src[i].kc_rel - 1]);
 	}
 
 	/* Check AR usage and load it if required */
@@ -1334,14 +1334,14 @@ int r600_bytecode_add_alu_type(struct r600_bytecode *bc,
 	}
 	/* number of gpr == the last gpr used in any alu */
 	for (i = 0; i < 3; i++) {
-		if (nalu->src[i].sel >= bc->ngpr && nalu->src[i].sel < 124) {
+		if (nalu->src[i].sel >= bc->ngpr && nalu->src[i].sel < 123) {
 			bc->ngpr = nalu->src[i].sel + 1;
 		}
 		if (nalu->src[i].sel == V_SQ_ALU_SRC_LITERAL)
 			r600_bytecode_special_constants(nalu->src[i].value,
 				&nalu->src[i].sel);
 	}
-	if (nalu->dst.write && nalu->dst.sel >= bc->ngpr && nalu->dst.sel < 124) {
+	if (nalu->dst.write && nalu->dst.sel >= bc->ngpr && nalu->dst.sel < 123) {
 		bc->ngpr = nalu->dst.sel + 1;
 	}
 	list_addtail(&nalu->list, &bc->cf_last->alu);
@@ -1456,10 +1456,9 @@ static int r600_bytecode_add_vtx_internal(struct r600_bytecode *bc, const struct
 		return -ENOMEM;
 	memcpy(nvtx, vtx, sizeof(struct r600_bytecode_vtx));
 
-	/* Load index register if required */
 	if (bc->gfx_level >= EVERGREEN) {
-		if (vtx->buffer_index_mode)
-			egcm_load_index_reg(bc, vtx->buffer_index_mode - 1, false);
+		assert(!vtx->buffer_index_mode ||
+		       bc->index_loaded[vtx->buffer_index_mode - 1]);
 	}
 
 
@@ -1524,10 +1523,11 @@ int r600_bytecode_add_tex(struct r600_bytecode *bc, const struct r600_bytecode_t
 		return -ENOMEM;
 	memcpy(ntex, tex, sizeof(struct r600_bytecode_tex));
 
-	/* Load index register if required */
 	if (bc->gfx_level >= EVERGREEN) {
-		if (tex->sampler_index_mode || tex->resource_index_mode)
-			egcm_load_index_reg(bc, tex->resource_index_mode - 1, false);
+		assert(!tex->sampler_index_mode ||
+		       bc->index_loaded[tex->sampler_index_mode - 1]);
+		assert(!tex->resource_index_mode ||
+                       bc->index_loaded[tex->resource_index_mode - 1]);
 	}
 
 	/* we can't fetch data und use it as texture lookup address in the same TEX clause */
@@ -1598,8 +1598,8 @@ int r600_bytecode_add_gds(struct r600_bytecode *bc, const struct r600_bytecode_g
 	memcpy(ngds, gds, sizeof(struct r600_bytecode_gds));
 
 	if (bc->gfx_level >= EVERGREEN) {
-		if (gds->uav_index_mode)
-			egcm_load_index_reg(bc, gds->uav_index_mode - 1, false);
+		assert(!gds->uav_index_mode ||
+		       bc->index_loaded[gds->uav_index_mode - 1]);
 	}
 
 	if (bc->cf_last == NULL ||
@@ -2508,11 +2508,16 @@ void r600_bytecode_disasm(struct r600_bytecode *bc)
 			o += print_swizzle(tex->src_sel_z);
 			o += print_swizzle(tex->src_sel_w);
 
-			o += fprintf(stderr, ",  RID:%d", tex->resource_id);
+			o += fprintf(stderr, ",  RID:%d ", tex->resource_id);
+                        if (tex->resource_index_mode)
+				fprintf(stderr, "RQ_%s", index_mode[tex->resource_index_mode]);
+
 			o += fprintf(stderr, ", SID:%d  ", tex->sampler_id);
 
 			if (tex->sampler_index_mode)
 				fprintf(stderr, "SQ_%s ", index_mode[tex->sampler_index_mode]);
+
+
 
 			if (tex->lod_bias)
 				fprintf(stderr, "LB:%d ", tex->lod_bias);
@@ -2947,7 +2952,7 @@ void *r600_create_vertex_fetch_shader(struct pipe_context *ctx,
 		PIPE_MAP_WRITE | PIPE_MAP_UNSYNCHRONIZED | RADEON_MAP_TEMPORARY);
 	bytecode += shader->offset / 4;
 
-	if (R600_BIG_ENDIAN) {
+	if (UTIL_ARCH_BIG_ENDIAN) {
 		for (i = 0; i < fs_size / 4; ++i) {
 			bytecode[i] = util_cpu_to_le32(bc.bytecode[i]);
 		}

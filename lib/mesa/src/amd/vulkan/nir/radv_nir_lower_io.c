@@ -41,9 +41,6 @@ radv_nir_lower_io_to_scalar_early(nir_shader *nir, nir_variable_mode mask)
 {
    bool progress = false;
 
-   NIR_PASS(progress, nir, nir_lower_array_deref_of_vec, mask,
-            nir_lower_direct_array_deref_of_vec_load | nir_lower_indirect_array_deref_of_vec_load |
-               nir_lower_direct_array_deref_of_vec_store | nir_lower_indirect_array_deref_of_vec_store);
    NIR_PASS(progress, nir, nir_lower_io_to_scalar_early, mask);
    if (progress) {
       /* Optimize the new vector code and then remove dead vars */
@@ -172,8 +169,8 @@ radv_nir_lower_io_to_mem(struct radv_device *device, struct radv_shader_stage *s
       NIR_PASS_V(nir, ac_nir_lower_gs_inputs_to_mem, map_input, device->physical_device->rad_info.gfx_level, false);
       return true;
    } else if (nir->info.stage == MESA_SHADER_TASK) {
-      ac_nir_lower_task_outputs_to_mem(nir, AC_TASK_PAYLOAD_ENTRY_BYTES,
-                                       device->physical_device->task_info.num_entries);
+      ac_nir_lower_task_outputs_to_mem(nir, AC_TASK_PAYLOAD_ENTRY_BYTES, device->physical_device->task_info.num_entries,
+                                       info->cs.has_query);
       return true;
    } else if (nir->info.stage == MESA_SHADER_MESH) {
       ac_nir_lower_mesh_inputs_to_mem(nir, AC_TASK_PAYLOAD_ENTRY_BYTES, device->physical_device->task_info.num_entries);

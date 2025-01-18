@@ -54,8 +54,6 @@ etna_compiler_create(const char *renderer, const struct etna_specs *specs)
       .lower_fmod = true,
       .lower_vector_cmp = true,
       .lower_fdph = true,
-      .lower_extract_byte = true,
-      .lower_extract_word = true,
       .lower_insert_byte = true,
       .lower_insert_word = true,
       .lower_fdiv = true, /* !specs->has_new_transcendentals */
@@ -94,6 +92,7 @@ etna_compiler_create(const char *renderer, const struct etna_specs *specs)
 void
 etna_compiler_destroy(const struct etna_compiler *compiler)
 {
+   disk_cache_destroy(compiler->disk_cache);
    ralloc_free((void *)compiler);
 }
 

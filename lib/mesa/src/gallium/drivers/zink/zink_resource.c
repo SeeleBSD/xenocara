@@ -309,15 +309,22 @@ create_bci(struct zink_screen *screen, const struct pipe_resource *templ, unsign
       bci.usage |= VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
 
    if (templ->flags & PIPE_RESOURCE_FLAG_SPARSE)
-      bci.flags |= VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+      bci.flags |= VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
    return bci;
 }
 
-static bool
+typedef enum {
+   USAGE_FAIL_NONE,
+   USAGE_FAIL_ERROR,
+   USAGE_FAIL_SUBOPTIMAL,
+} usage_fail;
+
+static usage_fail
 check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
 {
    VkImageFormatProperties image_props;
    VkResult ret;
+   bool optimalDeviceAccess = true;
    assert(modifier == DRM_FORMAT_MOD_INVALID ||
           (VKSCR(GetPhysicalDeviceImageFormatProperties2) && screen->info.have_EXT_image_drm_format_modifier));
    if (VKSCR(GetPhysicalDeviceImageFormatProperties2)) {
@@ -329,6 +336,12 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
       ycbcr_props.pNext = NULL;
       if (screen->info.have_KHR_sampler_ycbcr_conversion)
          props2.pNext = &ycbcr_props;
+      VkHostImageCopyDevicePerformanceQueryEXT hic = {
+         VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT,
+         props2.pNext,
+      };
+      if (screen->info.have_EXT_host_image_copy && ici->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)
+         props2.pNext = &hic;
       VkPhysicalDeviceImageFormatInfo2 info;
       info.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
       /* possibly VkImageFormatListCreateInfo */
@@ -346,6 +359,7 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
          mod_info.drmFormatModifier = modifier;
          mod_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
          mod_info.queueFamilyIndexCount = 0;
+         mod_info.pQueueFamilyIndices = NULL;
          info.pNext = &mod_info;
       }
 
@@ -354,24 +368,28 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
       if (vk_format_aspects(ici->format) & VK_IMAGE_ASPECT_PLANE_1_BIT)
          ret = VK_SUCCESS;
       image_props = props2.imageFormatProperties;
+      if (screen->info.have_EXT_host_image_copy && ici->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)
+         optimalDeviceAccess = hic.optimalDeviceAccess;
    } else
       ret = VKSCR(GetPhysicalDeviceImageFormatProperties)(screen->pdev, ici->format, ici->imageType,
                                                    ici->tiling, ici->usage, ici->flags, &image_props);
    if (ret != VK_SUCCESS)
-      return false;
+      return USAGE_FAIL_ERROR;
    if (ici->extent.depth > image_props.maxExtent.depth ||
        ici->extent.height > image_props.maxExtent.height ||
        ici->extent.width > image_props.maxExtent.width)
-      return false;
+      return USAGE_FAIL_ERROR;
    if (ici->mipLevels > image_props.maxMipLevels)
-      return false;
+      return USAGE_FAIL_ERROR;
    if (ici->arrayLayers > image_props.maxArrayLayers)
-      return false;
-   return true;
+      return USAGE_FAIL_ERROR;
+   if (!optimalDeviceAccess)
+      return USAGE_FAIL_SUBOPTIMAL;
+   return USAGE_FAIL_NONE;
 }
 
 static VkImageUsageFlags
-get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats, const struct pipe_resource *templ, unsigned bind, bool *need_extended)
+get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags2 feats, const struct pipe_resource *templ, unsigned bind, bool *need_extended)
 {
    VkImageUsageFlags usage = 0;
    bool is_planar = util_format_get_num_planes(templ->format) > 1;
@@ -433,6 +451,9 @@ get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats
    if (bind & PIPE_BIND_STREAM_OUTPUT)
       usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
 
+   if (screen->info.have_EXT_host_image_copy && feats & VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT)
+      usage |= VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+
    return usage;
 }
 
@@ -448,43 +469,69 @@ find_modifier_feats(const struct zink_modifier_prop *prop, uint64_t modifier, ui
    return 0;
 }
 
+/* check HIC optimalness */
+static bool
+suboptimal_check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t *mod)
+{
+   usage_fail fail = check_ici(screen, ici, *mod);
+   if (!fail)
+      return true;
+   if (fail == USAGE_FAIL_SUBOPTIMAL) {
+      ici->usage &= ~VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+      fail = check_ici(screen, ici, *mod);
+      if (!fail)
+         return true;
+   }
+   return false;
+}
+
 /* If the driver can't do mutable with this ICI, then try again after removing mutable (and
  * thus also the list of formats we might might mutate to)
  */
 static bool
 double_check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, VkImageUsageFlags usage, uint64_t *mod)
 {
-    if (!usage)
-       return false;
+   if (!usage)
+      return false;
 
-    const void *pNext = ici->pNext;
-    ici->usage = usage;
-    if (check_ici(screen, ici, *mod))
-       return true;
-    if (pNext) {
-       VkBaseOutStructure *prev = NULL;
-       VkBaseOutStructure *fmt_list = NULL;
-       vk_foreach_struct(strct, (void*)ici->pNext) {
-          if (strct->sType == VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO) {
-             fmt_list = strct;
-             if (prev) {
-                prev->pNext = strct->pNext;
-             } else {
-                ici->pNext = strct->pNext;
-             }
-             fmt_list->pNext = NULL;
-             break;
-          }
-          prev = strct;
-       }
-       ici->flags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
-       if (check_ici(screen, ici, *mod))
-          return true;
-       fmt_list->pNext = (void*)ici->pNext;
-       ici->pNext = fmt_list;
-       ici->flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
-    }
-    return false;
+   ici->usage = usage;
+
+   if (suboptimal_check_ici(screen, ici, mod))
+      return true;
+   usage_fail fail = check_ici(screen, ici, *mod);
+   if (!fail)
+      return true;
+   if (fail == USAGE_FAIL_SUBOPTIMAL) {
+      ici->usage &= ~VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+      fail = check_ici(screen, ici, *mod);
+      if (!fail)
+         return true;
+   }
+   const void *pNext = ici->pNext;
+   if (pNext) {
+      VkBaseOutStructure *prev = NULL;
+      VkBaseOutStructure *fmt_list = NULL;
+      vk_foreach_struct(strct, (void*)ici->pNext) {
+         if (strct->sType == VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO) {
+            fmt_list = strct;
+            if (prev) {
+               prev->pNext = strct->pNext;
+            } else {
+               ici->pNext = strct->pNext;
+            }
+            fmt_list->pNext = NULL;
+            break;
+         }
+         prev = strct;
+      }
+      ici->flags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+      if (suboptimal_check_ici(screen, ici, mod))
+         return true;
+      fmt_list->pNext = (void*)ici->pNext;
+      ici->pNext = fmt_list;
+      ici->flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+   }
+   return false;
 }
 
 static VkImageUsageFlags
@@ -537,8 +584,8 @@ get_image_usage(struct zink_screen *screen, VkImageCreateInfo *ici, const struct
          }
       }
    } else {
-      VkFormatProperties props = screen->format_props[templ->format];
-      VkFormatFeatureFlags feats = tiling == VK_IMAGE_TILING_LINEAR ? props.linearTilingFeatures : props.optimalTilingFeatures;
+      struct zink_format_props props = screen->format_props[templ->format];
+      VkFormatFeatureFlags2 feats = tiling == VK_IMAGE_TILING_LINEAR ? props.linearTilingFeatures : props.optimalTilingFeatures;
       if (ici->flags & VK_IMAGE_CREATE_EXTENDED_USAGE_BIT)
          feats = UINT32_MAX;
       VkImageUsageFlags usage = get_image_usage_for_feats(screen, feats, templ, bind, &need_extended);
@@ -651,6 +698,7 @@ init_ici(struct zink_screen *screen, VkImageCreateInfo *ici, const struct pipe_r
       ici->flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
    ici->usage = 0;
    ici->queueFamilyIndexCount = 0;
+   ici->pQueueFamilyIndices = NULL;
 
    /* assume we're going to be doing some CompressedTexSubImage */
    if (util_format_is_compressed(templ->format) && (ici->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) &&
@@ -730,6 +778,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       return NULL;
    simple_mtx_init(&obj->view_lock, mtx_plain);
    util_dynarray_init(&obj->views, NULL);
+   u_rwlock_init(&obj->copy_lock);
    obj->unordered_read = true;
    obj->unordered_write = true;
    obj->last_dt_idx = obj->dt_idx = UINT32_MAX; //TODO: unionize
@@ -800,6 +849,14 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       return obj;
    } else if (templ->target == PIPE_BUFFER) {
       VkBufferCreateInfo bci = create_bci(screen, templ, templ->bind);
+      VkExternalMemoryBufferCreateInfo embci;
+
+      if (user_mem) {
+         embci.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+         embci.pNext = bci.pNext;
+         embci.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+         bci.pNext = &embci;
+      }
 
       if (VKSCR(CreateBuffer)(screen->dev, &bci, NULL, &obj->buffer) != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateBuffer failed");
@@ -839,17 +896,6 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
    } else {
       max_level = templ->last_level + 1;
       bool winsys_modifier = (export_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) && whandle && whandle->modifier != DRM_FORMAT_MOD_INVALID;
-      uint64_t mods[10];
-      bool try_modifiers = false;
-      if ((export_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) &&
-          whandle && whandle->modifier == DRM_FORMAT_MOD_INVALID && whandle->stride) {
-         modifiers = mods;
-         modifiers_count = screen->modifier_props[templ->format].drmFormatModifierCount;
-         for (unsigned j = 0; j < modifiers_count; j++)
-            mods[j] = screen->modifier_props[templ->format].pDrmFormatModifierProperties[j].drmFormatModifier;
-         if (modifiers_count > 1)
-            try_modifiers = true;
-      }
       uint64_t *ici_modifiers = winsys_modifier ? &whandle->modifier : modifiers;
       unsigned ici_modifier_count = winsys_modifier ? 1 : modifiers_count;
       bool success = false;
@@ -947,6 +993,11 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          } else if (ici.tiling == VK_IMAGE_TILING_OPTIMAL) {
             shared = false;
          }
+      } else if (user_mem) {
+         emici.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+         emici.pNext = ici.pNext;
+         emici.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+         ici.pNext = &emici;
       }
 
       if (linear)
@@ -1032,18 +1083,6 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       }
 
       VkResult result = VKSCR(CreateImage)(screen->dev, &ici, NULL, &obj->image);
-      if (result != VK_SUCCESS) {
-         if (try_modifiers) {
-            for (unsigned i = 0; i < modifiers_count; i++) {
-               if (modifiers[i] == mod)
-                  continue;
-               idfmeci.drmFormatModifier = modifiers[i];
-               result = VKSCR(CreateImage)(screen->dev, &ici, NULL, &obj->image);
-               if (result == VK_SUCCESS)
-                  break;
-            }
-         }
-      }
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateImage failed (%s)", vk_Result_to_str(result));
          goto fail1;
@@ -1227,7 +1266,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       alignment = MAX2(alignment, screen->info.props.limits.minMemoryMapAlignment);
    obj->alignment = alignment;
 
-   if (zink_mem_type_idx_from_bits(screen, heap, reqs.memoryTypeBits) == UINT32_MAX) {
+   if (zink_mem_type_idx_from_types(screen, heap, reqs.memoryTypeBits) == UINT32_MAX) {
       /* not valid based on reqs; demote to more compatible type */
       switch (heap) {
       case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
@@ -1239,7 +1278,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       default:
          break;
       }
-      assert(zink_mem_type_idx_from_bits(screen, heap, reqs.memoryTypeBits) != UINT32_MAX);
+      assert(zink_mem_type_idx_from_types(screen, heap, reqs.memoryTypeBits) != UINT32_MAX);
    }
 
 retry:
@@ -1715,8 +1754,12 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
          whandle->handle = -1;
       } else {
          if (!res->obj->exportable) {
-            assert(!res->all_binds); //TODO handle if problematic
             assert(!zink_resource_usage_is_unflushed(res));
+            if (!screen->info.have_EXT_image_drm_format_modifier) {
+               static bool warned = false;
+               warn_missing_feature(warned, "EXT_image_drm_format_modifier");
+               return false;
+            }
             unsigned bind = ZINK_BIND_DMABUF;
             if (!(res->base.b.bind & PIPE_BIND_SHARED))
                bind |= PIPE_BIND_SHARED;
@@ -1725,7 +1768,8 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
                zink_screen_unlock_context(screen);
                return false;
             }
-            p_atomic_inc(&screen->image_rebind_counter);
+            if (res->all_binds)
+               p_atomic_inc(&screen->image_rebind_counter);
             screen->copy_context->base.flush(&screen->copy_context->base, NULL, 0);
             zink_screen_unlock_context(screen);
             obj = res->obj;
@@ -1796,12 +1840,18 @@ zink_resource_from_handle(struct pipe_screen *pscreen,
    if (templ->format == PIPE_FORMAT_NONE)
       templ2.format = whandle->format;
 
-   uint64_t modifier = DRM_FORMAT_MOD_INVALID;
-   int modifier_count = 0;
-   if (whandle->modifier != DRM_FORMAT_MOD_INVALID) {
+   uint64_t modifier = DRM_FORMAT_MOD_LINEAR;
+   int modifier_count = 1;
+   if (whandle->modifier != DRM_FORMAT_MOD_INVALID)
       modifier = whandle->modifier;
-      modifier_count = 1;
+   else {
+      if (!zink_screen(pscreen)->driver_workarounds.can_do_invalid_linear_modifier) {
+         mesa_loge("zink: display server doesn't support DRI3 modifiers and driver can't handle INVALID<->LINEAR!");
+         return NULL;
+      }
+      whandle->modifier = modifier;
    }
+   templ2.bind |= ZINK_BIND_DMABUF;
    struct pipe_resource *pres = resource_create(pscreen, &templ2, whandle, usage, &modifier, modifier_count, NULL, NULL);
    if (pres) {
       struct zink_resource *res = zink_resource(pres);
@@ -2371,6 +2421,109 @@ fail:
 }
 
 static void
+zink_image_subdata(struct pipe_context *pctx,
+                  struct pipe_resource *pres,
+                  unsigned level,
+                  unsigned usage,
+                  const struct pipe_box *box,
+                  const void *data,
+                  unsigned stride,
+                  uintptr_t layer_stride)
+{
+   struct zink_screen *screen = zink_screen(pctx->screen);
+   struct zink_context *ctx = zink_context(pctx);
+   struct zink_resource *res = zink_resource(pres);
+
+   /* flush clears to avoid subdata conflict */
+   if (res->obj->vkusage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)
+      zink_fb_clears_apply_or_discard(ctx, pres, zink_rect_from_box(box), false);
+   /* only use HIC if supported on image and no pending usage */
+   while (res->obj->vkusage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT &&
+          zink_resource_usage_check_completion(screen, res, ZINK_RESOURCE_ACCESS_RW)) {
+      /* uninit images are always supported */
+      bool change_layout = res->layout == VK_IMAGE_LAYOUT_UNDEFINED || res->layout == VK_IMAGE_LAYOUT_PREINITIALIZED;
+      if (!change_layout) {
+         /* image in some other layout: test for support */
+         bool can_copy_layout = false;
+         for (unsigned i = 0; i < screen->info.hic_props.copyDstLayoutCount; i++) {
+            if (screen->info.hic_props.pCopyDstLayouts[i] == res->layout) {
+               can_copy_layout = true;
+               break;
+            }
+         }
+         /* some layouts don't permit HIC copies */
+         if (!can_copy_layout)
+            break;
+      }
+      bool is_arrayed = false;
+      switch (pres->target) {
+      case PIPE_TEXTURE_1D_ARRAY:
+      case PIPE_TEXTURE_2D_ARRAY:
+      case PIPE_TEXTURE_CUBE:
+      case PIPE_TEXTURE_CUBE_ARRAY:
+         is_arrayed = true;
+         break;
+      default: break;
+      }
+      /* recalc strides into texel strides because HIC spec is insane */
+      unsigned vk_stride = util_format_get_stride(pres->format, 1);
+      stride /= vk_stride;
+      unsigned vk_layer_stride = util_format_get_2d_size(pres->format, stride, 1) * vk_stride;
+      layer_stride /= vk_layer_stride;
+
+      VkHostImageLayoutTransitionInfoEXT t = {
+         VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
+         NULL,
+         res->obj->image,
+         res->layout,
+         /* GENERAL support is guaranteed */
+         VK_IMAGE_LAYOUT_GENERAL,
+         {res->aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}
+      };
+      /* only pre-transition uninit images to avoid thrashing */
+      if (change_layout) {
+         VKSCR(TransitionImageLayoutEXT)(screen->dev, 1, &t);
+         res->layout = VK_IMAGE_LAYOUT_GENERAL;
+      }
+      VkMemoryToImageCopyEXT region = {
+         VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
+         NULL,
+         data,
+         stride,
+         layer_stride,
+         {res->aspect, level, is_arrayed ? box->z : 0, is_arrayed ? box->depth : 1},
+         {box->x, box->y, is_arrayed ? 0 : box->z},
+         {box->width, box->height, is_arrayed ? 1 : box->depth}
+      };
+      VkCopyMemoryToImageInfoEXT copy = {
+         VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
+         NULL,
+         0,
+         res->obj->image,
+         res->layout,
+         1,
+         &region
+      };
+      VKSCR(CopyMemoryToImageEXT)(screen->dev, &copy);
+      if (change_layout && screen->can_hic_shader_read && !pres->last_level && !box->x && !box->y && !box->z &&
+          box->width == pres->width0 && box->height == pres->height0 &&
+          ((is_arrayed && box->depth == pres->array_size) || (!is_arrayed && box->depth == pres->depth0))) {
+         /* assume full copy single-mip images use shader read access */
+         t.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+         t.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+         VKSCR(TransitionImageLayoutEXT)(screen->dev, 1, &t);
+         res->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+         /* assume multi-mip where further subdata calls may happen */
+      }
+      /* make sure image is marked as having data */
+      res->valid = true;
+      return;
+   }
+   /* fallback case for per-resource unsupported or device-level unsupported */
+   u_default_texture_subdata(pctx, pres, level, usage, box, data, stride, layer_stride);
+}
+
+static void
 zink_transfer_flush_region(struct pipe_context *pctx,
                            struct pipe_transfer *ptrans,
                            const struct pipe_box *box)
@@ -2423,6 +2576,7 @@ zink_resource_copy_box_intersects(struct zink_resource *res, unsigned level, con
    /* untracked huge miplevel */
    if (level >= ARRAY_SIZE(res->obj->copies))
       return true;
+   u_rwlock_rdlock(&res->obj->copy_lock);
    struct pipe_box *b = res->obj->copies[level].data;
    unsigned num_boxes = util_dynarray_num_elements(&res->obj->copies[level], struct pipe_box);
    bool (*intersect)(const struct pipe_box *, const struct pipe_box *);
@@ -2443,18 +2597,23 @@ zink_resource_copy_box_intersects(struct zink_resource *res, unsigned level, con
       break;
    }
    /* if any of the tracked boxes intersect with this one, a barrier is needed */
+   bool ret = false;
    for (unsigned i = 0; i < num_boxes; i++) {
-      if (intersect(box, b + i))
-         return true;
+      if (intersect(box, b + i)) {
+         ret = true;
+         break;
+      }
    }
+   u_rwlock_rdunlock(&res->obj->copy_lock);
    /* no intersection = no barrier */
-   return false;
+   return ret;
 }
 
 /* track a new region for TRANSFER_DST barrier emission */
 void
 zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, unsigned level, const struct pipe_box *box)
 {
+   u_rwlock_wrlock(&res->obj->copy_lock);
    if (res->obj->copies_valid) {
       struct pipe_box *b = res->obj->copies[level].data;
       unsigned num_boxes = util_dynarray_num_elements(&res->obj->copies[level], struct pipe_box);
@@ -2464,23 +2623,23 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
          case PIPE_TEXTURE_1D:
             /* no-op included region */
             if (b[i].x <= box->x && b[i].x + b[i].width >= box->x + box->width)
-               return;
+               goto out;
 
             /* try to merge adjacent regions */
             if (b[i].x == box->x + box->width) {
                b[i].x -= box->width;
                b[i].width += box->width;
-               return;
+               goto out;
             }
             if (b[i].x + b[i].width == box->x) {
                b[i].width += box->width;
-               return;
+               goto out;
             }
 
             /* try to merge into region */
             if (box->x <= b[i].x && box->x + box->width >= b[i].x + b[i].width) {
                *b = *box;
-               return;
+               goto out;
             }
             break;
 
@@ -2489,28 +2648,28 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
             /* no-op included region */
             if (b[i].x <= box->x && b[i].x + b[i].width >= box->x + box->width &&
                 b[i].y <= box->y && b[i].y + b[i].height >= box->y + box->height)
-               return;
+               goto out;
 
             /* try to merge adjacent regions */
             if (b[i].y == box->y && b[i].height == box->height) {
                if (b[i].x == box->x + box->width) {
                   b[i].x -= box->width;
                   b[i].width += box->width;
-                  return;
+                  goto out;
                }
                if (b[i].x + b[i].width == box->x) {
                   b[i].width += box->width;
-                  return;
+                  goto out;
                }
             } else if (b[i].x == box->x && b[i].width == box->width) {
                if (b[i].y == box->y + box->height) {
                   b[i].y -= box->height;
                   b[i].height += box->height;
-                  return;
+                  goto out;
                }
                if (b[i].y + b[i].height == box->y) {
                   b[i].height += box->height;
-                  return;
+                  goto out;
                }
             }
 
@@ -2518,7 +2677,7 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
             if (box->x <= b[i].x && box->x + box->width >= b[i].x + b[i].width &&
                 box->y <= b[i].y && box->y + box->height >= b[i].y + b[i].height) {
                *b = *box;
-               return;
+               goto out;
             }
             break;
 
@@ -2527,7 +2686,7 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
             if (b[i].x <= box->x && b[i].x + b[i].width >= box->x + box->width &&
                 b[i].y <= box->y && b[i].y + b[i].height >= box->y + box->height &&
                 b[i].z <= box->z && b[i].z + b[i].depth >= box->z + box->depth)
-               return;
+               goto out;
 
                /* try to merge adjacent regions */
             if (b[i].z == box->z && b[i].depth == box->depth) {
@@ -2535,21 +2694,21 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
                   if (b[i].x == box->x + box->width) {
                      b[i].x -= box->width;
                      b[i].width += box->width;
-                     return;
+                     goto out;
                   }
                   if (b[i].x + b[i].width == box->x) {
                      b[i].width += box->width;
-                     return;
+                     goto out;
                   }
                } else if (b[i].x == box->x && b[i].width == box->width) {
                   if (b[i].y == box->y + box->height) {
                      b[i].y -= box->height;
                      b[i].height += box->height;
-                     return;
+                     goto out;
                   }
                   if (b[i].y + b[i].height == box->y) {
                      b[i].height += box->height;
-                     return;
+                     goto out;
                   }
                }
             } else if (b[i].x == box->x && b[i].width == box->width) {
@@ -2557,21 +2716,21 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
                   if (b[i].z == box->z + box->depth) {
                      b[i].z -= box->depth;
                      b[i].depth += box->depth;
-                     return;
+                     goto out;
                   }
                   if (b[i].z + b[i].depth == box->z) {
                      b[i].depth += box->depth;
-                     return;
+                     goto out;
                   }
                } else if (b[i].z == box->z && b[i].depth == box->depth) {
                   if (b[i].y == box->y + box->height) {
                      b[i].y -= box->height;
                      b[i].height += box->height;
-                     return;
+                     goto out;
                   }
                   if (b[i].y + b[i].height == box->y) {
                      b[i].height += box->height;
-                     return;
+                     goto out;
                   }
                }
             } else if (b[i].y == box->y && b[i].height == box->height) {
@@ -2579,21 +2738,21 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
                   if (b[i].x == box->x + box->width) {
                      b[i].x -= box->width;
                      b[i].width += box->width;
-                     return;
+                     goto out;
                   }
                   if (b[i].x + b[i].width == box->x) {
                      b[i].width += box->width;
-                     return;
+                     goto out;
                   }
                } else if (b[i].x == box->x && b[i].width == box->width) {
                   if (b[i].z == box->z + box->depth) {
                      b[i].z -= box->depth;
                      b[i].depth += box->depth;
-                     return;
+                     goto out;
                   }
                   if (b[i].z + b[i].depth == box->z) {
                      b[i].depth += box->depth;
-                     return;
+                     goto out;
                   }
                }
             }
@@ -2602,7 +2761,7 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
             if (box->x <= b[i].x && box->x + box->width >= b[i].x + b[i].width &&
                 box->y <= b[i].y && box->y + box->height >= b[i].y + b[i].height &&
                 box->z <= b[i].z && box->z + box->depth >= b[i].z + b[i].depth)
-               return;
+               goto out;
 
             break;
          }
@@ -2615,6 +2774,8 @@ zink_resource_copy_box_add(struct zink_context *ctx, struct zink_resource *res, 
       res->copies_warned = true;
    }
    res->obj->copies_valid = true;
+out:
+   u_rwlock_wrunlock(&res->obj->copy_lock);
 }
 
 void
@@ -2622,6 +2783,7 @@ zink_resource_copies_reset(struct zink_resource *res)
 {
    if (!res->obj->copies_valid)
       return;
+   u_rwlock_wrlock(&res->obj->copy_lock);
    unsigned max_level = res->base.b.target == PIPE_BUFFER ? 1 : (res->base.b.last_level + 1);
    if (res->base.b.target == PIPE_BUFFER) {
       /* flush transfer regions back to valid range on reset */
@@ -2634,6 +2796,7 @@ zink_resource_copies_reset(struct zink_resource *res)
       util_dynarray_clear(&res->obj->copies[i]);
    res->obj->copies_valid = false;
    res->obj->copies_need_reset = false;
+   u_rwlock_wrunlock(&res->obj->copy_lock);
 }
 
 static void
@@ -2663,6 +2826,16 @@ do_transfer_unmap(struct zink_screen *screen, struct zink_transfer *trans)
    if (!res)
       res = zink_resource(trans->base.b.resource);
    unmap_resource(screen, res);
+}
+
+void
+zink_screen_buffer_unmap(struct pipe_screen *pscreen, struct pipe_transfer *ptrans)
+{
+   struct zink_screen *screen = zink_screen(pscreen);
+   struct zink_transfer *trans = (struct zink_transfer *)ptrans;
+   if (trans->base.b.usage & PIPE_MAP_ONCE && !trans->staging_res)
+      do_transfer_unmap(screen, trans);
+   transfer_unmap(NULL, ptrans);
 }
 
 static void
@@ -2889,6 +3062,6 @@ zink_context_resource_init(struct pipe_context *pctx)
 
    pctx->transfer_flush_region = u_transfer_helper_transfer_flush_region;
    pctx->buffer_subdata = zink_buffer_subdata;
-   pctx->texture_subdata = u_default_texture_subdata;
+   pctx->texture_subdata = zink_image_subdata;
    pctx->invalidate_resource = zink_resource_invalidate;
 }

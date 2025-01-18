@@ -43,7 +43,6 @@ static const nir_shader_compiler_options options = {
    .lower_all_io_to_temps = true,
    .vertex_id_zero_based = true, /* its not implemented anyway */
    .lower_bitops = true,
-   .lower_rotate = true,
    .lower_vector_cmp = true,
    .lower_fdph = true,
    .has_fsub = true,
@@ -1148,7 +1147,7 @@ ir2_nir_compile(struct ir2_context *ctx, bool binning)
 
    OPT_V(ctx->nir, nir_convert_from_ssa, true);
 
-   OPT_V(ctx->nir, nir_move_vec_src_uses_to_dest);
+   OPT_V(ctx->nir, nir_move_vec_src_uses_to_dest, false);
    OPT_V(ctx->nir, nir_lower_vec_to_regs, NULL, NULL);
 
    OPT_V(ctx->nir, nir_legacy_trivialize, true);

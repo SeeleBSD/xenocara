@@ -1,3 +1,7 @@
+/*
+ * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+ * SPDX-License-Identifier: MIT
+ */
 #ifndef NVK_BUFFER_H
 #define NVK_BUFFER_H 1
 
@@ -19,12 +23,8 @@ struct nvk_buffer {
    struct vk_buffer vk;
    uint64_t addr;
 
-#if NVK_NEW_UAPI == 1
    /** Size of the reserved VMA range for sparse buffers, zero otherwise. */
    uint64_t vma_size_B;
-#else
-   struct nvk_device_memory *mem;
-#endif
    bool is_local;
 };
 

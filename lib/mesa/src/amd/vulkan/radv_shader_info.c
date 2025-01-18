@@ -75,7 +75,7 @@ gather_intrinsic_store_output_info(const nir_shader *nir, const nir_intrinsic_in
       break;
    case MESA_SHADER_FRAGMENT:
       if (idx >= FRAG_RESULT_DATA0) {
-         info->ps.colors_written |= 0xf << (4 * (idx - FRAG_RESULT_DATA0));
+         info->ps.colors_written |= 0xfu << (4 * (idx - FRAG_RESULT_DATA0));
 
          if (idx == FRAG_RESULT_DATA0)
             info->ps.color0_written = write_mask;
@@ -683,7 +683,8 @@ gather_shader_info_gs(struct radv_device *device, const nir_shader *nir, struct 
 }
 
 static void
-gather_shader_info_mesh(const nir_shader *nir, struct radv_shader_info *info)
+gather_shader_info_mesh(const nir_shader *nir, const struct radv_pipeline_key *pipeline_key,
+                        struct radv_shader_info *info)
 {
    struct gfx10_ngg_info *ngg_info = &info->ngg_info;
 
@@ -723,12 +724,24 @@ gather_shader_info_mesh(const nir_shader *nir, struct radv_shader_info *info)
    ngg_info->prim_amp_factor = nir->info.mesh.max_primitives_out;
    ngg_info->vgt_esgs_ring_itemsize = 1;
 
-   unsigned min_ngg_workgroup_size = ac_compute_ngg_workgroup_size(ngg_info->hw_max_esverts, ngg_info->max_gsprims,
-                                                                   ngg_info->max_out_verts, ngg_info->prim_amp_factor);
+   info->ms.has_query = pipeline_key->mesh_shader_queries;
+}
 
+static void
+calc_mesh_workgroup_size(const struct radv_device *device, const nir_shader *nir, struct radv_shader_info *info)
+{
    unsigned api_workgroup_size = ac_compute_cs_workgroup_size(nir->info.workgroup_size, false, UINT32_MAX);
 
-   info->workgroup_size = MAX2(min_ngg_workgroup_size, api_workgroup_size);
+   if (device->mesh_fast_launch_2) {
+      /* Use multi-row export. It is also necessary to use the API workgroup size for non-emulated queries. */
+      info->workgroup_size = api_workgroup_size;
+   } else {
+      struct gfx10_ngg_info *ngg_info = &info->ngg_info;
+      unsigned min_ngg_workgroup_size = ac_compute_ngg_workgroup_size(
+         ngg_info->hw_max_esverts, ngg_info->max_gsprims, ngg_info->max_out_verts, ngg_info->prim_amp_factor);
+
+      info->workgroup_size = MAX2(min_ngg_workgroup_size, api_workgroup_size);
+   }
 }
 
 static void
@@ -908,10 +921,11 @@ gather_shader_info_cs(struct radv_device *device, const nir_shader *nir, const s
    unsigned local_size = nir->info.workgroup_size[0] * nir->info.workgroup_size[1] * nir->info.workgroup_size[2];
 
    /* Games don't always request full subgroups when they should, which can cause bugs if cswave32
-    * is enabled.
+    * is enabled. Furthermore, if cooperative matrices or subgroup info are used, we can't transparently change
+    * the subgroup size.
     */
    const bool require_full_subgroups =
-      pipeline_key->stage_info[MESA_SHADER_COMPUTE].subgroup_require_full ||
+      pipeline_key->stage_info[MESA_SHADER_COMPUTE].subgroup_require_full || nir->info.cs.has_cooperative_matrix ||
       (default_wave_size == 32 && nir->info.uses_wide_subgroup_intrinsics && local_size % RADV_SUBGROUP_SIZE == 0);
 
    const unsigned required_subgroup_size = pipeline_key->stage_info[MESA_SHADER_COMPUTE].subgroup_required_size * 32;
@@ -933,7 +947,8 @@ gather_shader_info_cs(struct radv_device *device, const nir_shader *nir, const s
 }
 
 static void
-gather_shader_info_task(const nir_shader *nir, struct radv_shader_info *info)
+gather_shader_info_task(const nir_shader *nir, const struct radv_pipeline_key *pipeline_key,
+                        struct radv_shader_info *info)
 {
    /* Task shaders always need these for the I/O lowering even if the API shader doesn't actually
     * use them.
@@ -953,6 +968,8 @@ gather_shader_info_task(const nir_shader *nir, struct radv_shader_info *info)
     */
    info->cs.linear_taskmesh_dispatch =
       nir->info.mesh.ts_mesh_dispatch_dimensions[1] == 1 && nir->info.mesh.ts_mesh_dispatch_dimensions[2] == 1;
+
+   info->cs.has_query = pipeline_key->mesh_shader_queries;
 }
 
 static uint32_t
@@ -1012,7 +1029,7 @@ radv_get_user_data_0(const struct radv_device *device, struct radv_shader_info *
 }
 
 static bool
-radv_is_shader_monolithic(const struct radv_device *device, const struct radv_shader_info *info)
+radv_is_merged_shader_compiled_separately(const struct radv_device *device, const struct radv_shader_info *info)
 {
    const enum amd_gfx_level gfx_level = device->physical_device->rad_info.gfx_level;
 
@@ -1020,21 +1037,21 @@ radv_is_shader_monolithic(const struct radv_device *device, const struct radv_sh
       switch (info->stage) {
       case MESA_SHADER_VERTEX:
          if (info->next_stage == MESA_SHADER_TESS_CTRL || info->next_stage == MESA_SHADER_GEOMETRY)
-            return info->outputs_linked;
+            return !info->outputs_linked;
          break;
       case MESA_SHADER_TESS_EVAL:
          if (info->next_stage == MESA_SHADER_GEOMETRY)
-            return info->outputs_linked;
+            return !info->outputs_linked;
          break;
       case MESA_SHADER_TESS_CTRL:
       case MESA_SHADER_GEOMETRY:
-         return info->inputs_linked;
+         return !info->inputs_linked;
       default:
          break;
       }
    }
 
-   return true;
+   return false;
 }
 
 void
@@ -1148,26 +1165,29 @@ radv_nir_shader_info_pass(struct radv_device *device, const struct nir_shader *n
    info->uses_invocation_id |= BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_INVOCATION_ID);
    info->uses_prim_id |= BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_PRIMITIVE_ID);
 
-   /* Used by compute and mesh shaders. */
-   info->cs.uses_grid_size = BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_NUM_WORKGROUPS);
+   /* Used by compute and mesh shaders. Mesh shaders must always declare this before GFX11. */
+   info->cs.uses_grid_size =
+      BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_NUM_WORKGROUPS) ||
+      (nir->info.stage == MESA_SHADER_MESH && device->physical_device->rad_info.gfx_level < GFX11);
    info->cs.uses_local_invocation_idx = BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_LOCAL_INVOCATION_INDEX) |
                                         BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_SUBGROUP_ID) |
                                         BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_NUM_SUBGROUPS);
 
-   if (nir->info.stage == MESA_SHADER_COMPUTE || nir->info.stage == MESA_SHADER_TASK) {
+   if (nir->info.stage == MESA_SHADER_COMPUTE || nir->info.stage == MESA_SHADER_TASK ||
+       nir->info.stage == MESA_SHADER_MESH) {
       for (int i = 0; i < 3; ++i)
          info->cs.block_size[i] = nir->info.workgroup_size[i];
    }
 
    info->user_data_0 = radv_get_user_data_0(device, info);
-   info->is_monolithic = radv_is_shader_monolithic(device, info);
+   info->merged_shader_compiled_separately = radv_is_merged_shader_compiled_separately(device, info);
 
    switch (nir->info.stage) {
    case MESA_SHADER_COMPUTE:
       gather_shader_info_cs(device, nir, pipeline_key, info);
       break;
    case MESA_SHADER_TASK:
-      gather_shader_info_task(nir, info);
+      gather_shader_info_task(nir, pipeline_key, info);
       break;
    case MESA_SHADER_FRAGMENT:
       gather_shader_info_fs(device, nir, pipeline_key, info);
@@ -1185,7 +1205,7 @@ radv_nir_shader_info_pass(struct radv_device *device, const struct nir_shader *n
       gather_shader_info_vs(device, nir, pipeline_key, info);
       break;
    case MESA_SHADER_MESH:
-      gather_shader_info_mesh(nir, info);
+      gather_shader_info_mesh(nir, pipeline_key, info);
       break;
    default:
       if (gl_shader_stage_is_rt(nir->info.stage))
@@ -1211,7 +1231,7 @@ radv_nir_shader_info_pass(struct radv_device *device, const struct nir_shader *n
                                      (info->workgroup_size % info->wave_size) == 0;
       break;
    case MESA_SHADER_MESH:
-      /* Already computed in gather_shader_info_mesh(). */
+      calc_mesh_workgroup_size(device, nir, info);
       break;
    default:
       /* FS always operates without workgroups. Other stages are computed during linking but assume

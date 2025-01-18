@@ -325,15 +325,22 @@ _eglSetFuncName(const char *funcName, _EGLDisplay *disp, EGLenum objectType,
                 _EGLResource *object)
 {
    _EGLThreadInfo *thr = _eglGetCurrentThread();
-   thr->CurrentFuncName = funcName;
-   thr->CurrentObjectLabel = NULL;
+   if (!_eglIsCurrentThreadDummy()) {
+      thr->CurrentFuncName = funcName;
+      thr->CurrentObjectLabel = NULL;
 
-   if (objectType == EGL_OBJECT_THREAD_KHR)
-      thr->CurrentObjectLabel = thr->Label;
-   else if (objectType == EGL_OBJECT_DISPLAY_KHR && disp)
-      thr->CurrentObjectLabel = disp->Label;
-   else if (object)
-      thr->CurrentObjectLabel = object->Label;
+      if (objectType == EGL_OBJECT_THREAD_KHR)
+         thr->CurrentObjectLabel = thr->Label;
+      else if (objectType == EGL_OBJECT_DISPLAY_KHR && disp)
+         thr->CurrentObjectLabel = disp->Label;
+      else if (object)
+         thr->CurrentObjectLabel = object->Label;
+
+      return;
+   }
+
+   _eglDebugReport(EGL_BAD_ALLOC, funcName, EGL_DEBUG_MSG_CRITICAL_KHR, NULL);
+   return;
 }
 
 #define _EGL_FUNC_START(disp, objectType, object)                              \
@@ -682,7 +689,6 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
 
       const char *env = getenv("MESA_LOADER_DRIVER_OVERRIDE");
       disp->Options.Zink = env && !strcmp(env, "zink");
-      disp->Options.ForceSoftware |= disp->Options.Zink;
 
       const char *gallium_hud_env = getenv("GALLIUM_HUD");
       disp->Options.GalliumHudWarn =
@@ -696,9 +702,17 @@ eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
          if (disp->Options.ForceSoftware)
             RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
          else {
-            disp->Options.ForceSoftware = EGL_TRUE;
-            if (!_eglDriver.Initialize(disp))
-               RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
+            bool success = false;
+            if (!disp->Options.Zink && !getenv("GALLIUM_DRIVER")) {
+               disp->Options.Zink = EGL_TRUE;
+               success = _eglDriver.Initialize(disp);
+            }
+            if (!success) {
+               disp->Options.Zink = EGL_FALSE;
+               disp->Options.ForceSoftware = EGL_TRUE;
+               if (!_eglDriver.Initialize(disp))
+                  RETURN_EGL_ERROR(disp, EGL_NOT_INITIALIZED, EGL_FALSE);
+            }
          }
       }
 
@@ -1715,7 +1729,8 @@ eglGetError(void)
 {
    _EGLThreadInfo *t = _eglGetCurrentThread();
    EGLint e = t->LastError;
-   t->LastError = EGL_SUCCESS;
+   if (!_eglIsCurrentThreadDummy())
+      t->LastError = EGL_SUCCESS;
    return e;
 }
 
@@ -1742,6 +1757,8 @@ eglBindAPI(EGLenum api)
    _EGL_FUNC_START(NULL, EGL_OBJECT_THREAD_KHR, NULL);
 
    t = _eglGetCurrentThread();
+   if (_eglIsCurrentThreadDummy())
+      RETURN_EGL_ERROR(NULL, EGL_BAD_ALLOC, EGL_FALSE);
 
    if (!_eglIsApiValid(api))
       RETURN_EGL_ERROR(NULL, EGL_BAD_PARAMETER, EGL_FALSE);
@@ -1786,17 +1803,19 @@ PUBLIC EGLBoolean EGLAPIENTRY
 eglReleaseThread(void)
 {
    /* unbind current contexts */
-   _EGLThreadInfo *t = _eglGetCurrentThread();
-   _EGLContext *ctx = t->CurrentContext;
+   if (!_eglIsCurrentThreadDummy()) {
+      _EGLThreadInfo *t = _eglGetCurrentThread();
+      _EGLContext *ctx = t->CurrentContext;
 
-   _EGL_FUNC_START(NULL, EGL_OBJECT_THREAD_KHR, NULL);
+      _EGL_FUNC_START(NULL, EGL_OBJECT_THREAD_KHR, NULL);
 
-   if (ctx) {
-      _EGLDisplay *disp = ctx->Resource.Display;
+      if (ctx) {
+         _EGLDisplay *disp = ctx->Resource.Display;
 
-      u_rwlock_rdlock(&disp->TerminateLock);
-      (void)disp->Driver->MakeCurrent(disp, NULL, NULL, NULL);
-      u_rwlock_rdunlock(&disp->TerminateLock);
+         u_rwlock_rdlock(&disp->TerminateLock);
+         (void)disp->Driver->MakeCurrent(disp, NULL, NULL, NULL);
+         u_rwlock_rdunlock(&disp->TerminateLock);
+      }
    }
 
    _eglDestroyCurrentThread();
@@ -2514,8 +2533,12 @@ eglLabelObjectKHR(EGLDisplay dpy, EGLenum objectType, EGLObjectKHR object,
    if (objectType == EGL_OBJECT_THREAD_KHR) {
       _EGLThreadInfo *t = _eglGetCurrentThread();
 
-      t->Label = label;
-      return EGL_SUCCESS;
+      if (!_eglIsCurrentThreadDummy()) {
+         t->Label = label;
+         return EGL_SUCCESS;
+      }
+
+      RETURN_EGL_ERROR(NULL, EGL_BAD_ALLOC, EGL_BAD_ALLOC);
    }
 
    disp = _eglLockDisplay(dpy);

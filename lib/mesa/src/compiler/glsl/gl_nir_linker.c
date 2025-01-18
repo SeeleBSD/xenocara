@@ -299,15 +299,6 @@ disable_varying_optimizations_for_sso(struct gl_shader_program *prog)
    }
 }
 
-/**
- * Built-in / reserved GL variables names start with "gl_"
- */
-static inline bool
-is_gl_identifier(const char *s)
-{
-   return s && s[0] == 'g' && s[1] == 'l' && s[2] == '_';
-}
-
 static bool
 inout_has_same_location(const nir_variable *var, unsigned stage)
 {
@@ -1066,6 +1057,8 @@ preprocess_shader(const struct gl_constants *consts,
                  options->lower_to_scalar_filter, NULL);
    }
 
+   NIR_PASS_V(nir, nir_opt_barrier_modes);
+
    /* before buffers and vars_to_ssa */
    NIR_PASS_V(nir, gl_nir_lower_images, true);
 
@@ -1334,6 +1327,44 @@ gl_nir_link_glsl(const struct gl_constants *consts,
       prog->last_vert_prog = prog->_LinkedShaders[i]->Program;
       break;
    }
+
+   unsigned first = MESA_SHADER_STAGES;
+   unsigned last = 0;
+
+   /* Determine first and last stage. */
+   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+      if (!prog->_LinkedShaders[i])
+         continue;
+      if (first == MESA_SHADER_STAGES)
+         first = i;
+      last = i;
+   }
+
+   /* Validate the inputs of each stage with the output of the preceding
+    * stage.
+    */
+   unsigned prev = first;
+   for (unsigned i = prev + 1; i <= MESA_SHADER_FRAGMENT; i++) {
+      if (prog->_LinkedShaders[i] == NULL)
+         continue;
+
+      gl_nir_cross_validate_outputs_to_inputs(consts, prog,
+                                              prog->_LinkedShaders[prev],
+                                              prog->_LinkedShaders[i]);
+      if (!prog->data->LinkStatus)
+         return false;
+
+      prev = i;
+   }
+
+   /* The cross validation of outputs/inputs above validates interstage
+    * explicit locations. We need to do this also for the inputs in the first
+    * stage and outputs of the last stage included in the program, since there
+    * is no cross validation for these.
+    */
+   gl_nir_validate_first_and_last_interface_explicit_locations(consts, prog,
+                                                               (gl_shader_stage) first,
+                                                               (gl_shader_stage) last);
 
    if (prog->SeparateShader)
       disable_varying_optimizations_for_sso(prog);

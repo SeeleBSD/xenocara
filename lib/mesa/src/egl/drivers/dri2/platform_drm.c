@@ -329,6 +329,13 @@ dri2_drm_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
       if (dri2_surf->color_buffers[i].age > 0)
          dri2_surf->color_buffers[i].age++;
 
+   /* Flushing must be done before get_back_bo to make sure glthread's
+    * unmarshalling thread is idle otherwise it might concurrently
+    * call get_back_bo (eg: through dri2_drm_image_get_buffers).
+    */
+   dri2_flush_drawable_for_swapbuffers(disp, draw);
+   dri2_dpy->flush->invalidate(dri2_surf->dri_drawable);
+
    /* Make sure we have a back buffer in case we're swapping without
     * ever rendering. */
    if (get_back_bo(dri2_surf) < 0)
@@ -337,9 +344,6 @@ dri2_drm_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
    dri2_surf->current = dri2_surf->back;
    dri2_surf->current->age = 1;
    dri2_surf->back = NULL;
-
-   dri2_flush_drawable_for_swapbuffers(disp, draw);
-   dri2_dpy->flush->invalidate(dri2_surf->dri_drawable);
 
    return EGL_TRUE;
 }
@@ -565,17 +569,12 @@ static const struct dri2_egl_display_vtbl dri2_drm_display_vtbl = {
 EGLBoolean
 dri2_initialize_drm(_EGLDisplay *disp)
 {
-   _EGLDevice *dev;
-   struct dri2_egl_display *dri2_dpy;
    struct gbm_device *gbm;
    const char *err;
-
-   dri2_dpy = calloc(1, sizeof *dri2_dpy);
+   struct dri2_egl_display *dri2_dpy = dri2_display_create();
    if (!dri2_dpy)
-      return _eglError(EGL_BAD_ALLOC, "eglInitialize");
+      return EGL_FALSE;
 
-   dri2_dpy->fd_render_gpu = -1;
-   dri2_dpy->fd_display_gpu = -1;
    disp->DriverData = (void *)dri2_dpy;
 
    gbm = disp->PlatformDisplay;
@@ -623,17 +622,7 @@ dri2_initialize_drm(_EGLDisplay *disp)
       goto cleanup;
    }
 
-   dev = _eglFindDevice(dri2_dpy->fd_render_gpu, dri2_dpy->gbm_dri->software);
-   if (!dev) {
-      err = "DRI2: failed to find EGLDevice";
-      goto cleanup;
-   }
-
-   disp->Device = dev;
-
    dri2_dpy->driver_name = strdup(dri2_dpy->gbm_dri->driver_name);
-   dri2_dpy->is_render_node =
-      drmGetNodeTypeFromFd(dri2_dpy->fd_render_gpu) == DRM_NODE_RENDER;
 
    if (!dri2_load_driver_dri3(disp)) {
       err = "DRI3: failed to load driver";
@@ -663,6 +652,11 @@ dri2_initialize_drm(_EGLDisplay *disp)
 
    if (!dri2_setup_extensions(disp)) {
       err = "DRI2: failed to find required DRI extensions";
+      goto cleanup;
+   }
+
+   if (!dri2_setup_device(disp, dri2_dpy->gbm_dri->software)) {
+      err = "DRI2: failed to setup EGLDevice";
       goto cleanup;
    }
 

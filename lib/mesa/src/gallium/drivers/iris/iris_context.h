@@ -825,6 +825,10 @@ struct iris_context {
       /** Current/upcoming ds_write_state for Wa_18019816803. */
       bool ds_write_state;
 
+      /** State tracking for Wa_14018912822. */
+      bool color_blend_zero;
+      bool alpha_blend_zero;
+
       /** Do we have integer RT in current framebuffer state? */
       bool has_integer_rt;
 
@@ -1175,6 +1179,9 @@ void gfx9_toggle_preemption(struct iris_context *ice,
 #  include "iris_genx_protos.h"
 #  undef genX
 #  define genX(x) gfx125_##x
+#  include "iris_genx_protos.h"
+#  undef genX
+#  define genX(x) gfx20_##x
 #  include "iris_genx_protos.h"
 #  undef genX
 #endif

@@ -63,6 +63,7 @@ static const driOptionDescription vn_dri_options[] = {
    DRI_CONF_SECTION_END
    DRI_CONF_SECTION_DEBUG
       DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(false)
+      DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(false)
    DRI_CONF_SECTION_END
    /* clang-format on */
 };
@@ -135,6 +136,9 @@ vn_instance_init_ring(struct vn_instance *instance)
 
    ring->monitor.report_period_us = 3000000;
    mtx_init(&ring->monitor.mutex, mtx_plain);
+
+   /* ring monitor should be alive at all time */
+   ring->monitor.alive = true;
 
    const struct VkRingMonitorInfoMESA monitor_info = {
       .sType = VK_STRUCTURE_TYPE_RING_MONITOR_INFO_MESA,

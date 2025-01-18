@@ -263,8 +263,8 @@ agx_batch_print_stats(struct agx_device *dev, struct agx_batch *batch)
       agx_debug_fault(dev, info->address);
    }
 
-   assert(info->status == DRM_ASAHI_STATUS_COMPLETE ||
-          info->status == DRM_ASAHI_STATUS_KILLED);
+   /*assert(info->status == DRM_ASAHI_STATUS_COMPLETE ||
+          info->status == DRM_ASAHI_STATUS_KILLED);*/
 }
 
 static void
